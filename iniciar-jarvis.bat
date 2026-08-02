@@ -1,5 +1,6 @@
 @echo off
 title J.A.R.V.I.S. Core Launcher
+cd /d "c:\PROYECTOS\jarvis"
 echo ===================================================
 echo   INICIANDO NÚCLEO DE J.A.R.V.I.S.
 echo ===================================================
