@@ -100,16 +100,13 @@ function executeSystemAction(action) {
       } else if (param === 'explorer') {
         exec('explorer');
       } else if (param) {
-        // Try launching the custom app name directly using start (handles shortcuts, path executables)
         const sanitizedParam = param.replace(/[^a-zA-Z0-9-_\s.]/g, '');
-        exec(`start "" "${sanitizedParam}"`, (err) => {
+        console.log(`Searching and launching custom app: "${sanitizedParam}"`);
+        exec(`powershell -ExecutionPolicy Bypass -File open-app.ps1 -AppName "${sanitizedParam}"`, (err, stdout, stderr) => {
           if (err) {
-            // Try with .exe extension
-            exec(`start "" "${sanitizedParam}.exe"`, (err2) => {
-              if (err2) {
-                console.error(`Failed to launch custom app "${sanitizedParam}":`, err2);
-              }
-            });
+            console.error(`Failed fuzzy search launch for "${sanitizedParam}":`, stderr || err);
+          } else {
+            console.log(`Fuzzy launch stdout:`, stdout.trim());
           }
         });
       }
