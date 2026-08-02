@@ -286,8 +286,13 @@ async function playVoiceResponse(base64Audio) {
     audioSource = audioCtx.createBufferSource();
     audioSource.buffer = audioBuffer;
     
+    // Create a gain node to amplify voice volume
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = 2.0; // Double the original volume
+    
     audioSource.connect(analyser);
-    analyser.connect(audioCtx.destination);
+    analyser.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
     
     setReactorState('speaking');
     audioSource.start(0);
@@ -313,6 +318,7 @@ function speakWithBrowserSynthesis(text) {
     utterance.lang = 'es-ES';
     utterance.pitch = 0.85; // Slightly deeper, robotic/intelligent
     utterance.rate = 1.05;
+    utterance.volume = 1.0; // Max volume for browser synthesis
 
     // Connect simulated visualizer during speech
     setReactorState('speaking');
