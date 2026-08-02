@@ -235,7 +235,7 @@ Example JSON response:
       try {
         // Antoni voice ID is ErXwobaYiN019PkySvjV (refined, good quality)
         // Alternatively, Rachel is 21m00Tcm4TlvDq8ikWAM, Adam is pNInz6obpgq9S3JmKWzz
-        const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgq9S3JmKWzz'; 
+        const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB'; 
         const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
 
         const ttsResponse = await fetch(elevenLabsUrl, {

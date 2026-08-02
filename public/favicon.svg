@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Glowing Background -->
+  <circle cx="50" cy="50" r="48" fill="#020914" stroke="#00d2ff" stroke-width="2" />
+  <!-- Tech lines -->
+  <circle cx="50" cy="50" r="40" fill="none" stroke="#00d2ff" stroke-width="1.5" stroke-dasharray="3, 5" opacity="0.6" />
+  <circle cx="50" cy="50" r="32" fill="none" stroke="#00d2ff" stroke-width="3" stroke-dasharray="14, 5" />
+  <!-- Arc Reactor Segments (Triangles) -->
+  <g transform="translate(50,50)" fill="#00d2ff">
+    <polygon points="-5,-24 5,-24 0,-15" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(36)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(72)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(108)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(144)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(180)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(216)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(252)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(288)" />
+    <polygon points="-5,-24 5,-24 0,-15" transform="rotate(324)" />
+  </g>
+  <!-- Core Center -->
+  <circle cx="50" cy="50" r="12" fill="#0b1a30" stroke="#00d2ff" stroke-width="2.5" />
+  <circle cx="50" cy="50" r="8" fill="#ffffff" />
+</svg>

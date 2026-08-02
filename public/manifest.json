@@ -1,0 +1,16 @@
+{
+  "short_name": "JARVIS",
+  "name": "J.A.R.V.I.S. - Stark Industries OS",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#020914",
+  "theme_color": "#00d2ff",
+  "display": "standalone",
+  "orientation": "landscape"
+}

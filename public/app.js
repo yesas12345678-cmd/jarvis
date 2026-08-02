@@ -531,8 +531,8 @@ async function startBackgroundListening() {
       const isSpeakingState = arcReactor.className.includes('reactor-speaking');
       const now = Date.now();
       
-      // A clap is when volume spikes above 0.35 AND is at least 3.5x louder than the background noise
-      const isSpike = volume > 0.35 && volume > (avgVolume * 3.5);
+      // A clap is when volume spikes above 0.15 AND is at least 2.2x louder than the background noise
+      const isSpike = volume > 0.15 && volume > (avgVolume * 2.2);
 
       if (isSpike && !isSpeakingState && (now - lastClapTime) > 200) {
         const elapsed = now - lastClapTime;
