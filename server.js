@@ -29,7 +29,7 @@ if (!process.env.ELEVENLABS_API_KEY) {
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const model = genAI.getGenerativeModel({ 
-  model: 'gemini-2.5-flash',
+  model: 'gemini-3.5-flash',
   generationConfig: { responseMimeType: "application/json" }
 });
 
