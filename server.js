@@ -219,8 +219,12 @@ Example JSON response:
       parsedResponse = JSON.parse(cleanText.trim());
     } catch (e) {
       console.error('Failed to parse JSON response from Gemini:', textResponse);
+      // Try to extract only the actual reply text using regex to avoid leaking JSON keys to the user
+      const replyMatch = textResponse.match(/"?reply"?\s*:\s*"([\s\S]*?)"/i);
+      const extractedReply = replyMatch ? replyMatch[1] : textResponse.replace(/[{}\n\r"]/g, '').trim();
+      
       parsedResponse = {
-        reply: textResponse.replace(/[{}\n\r"]/g, '').trim(),
+        reply: extractedReply,
         action: null
       };
     }
