@@ -476,7 +476,10 @@ async function startBackgroundListening() {
     
     addConsoleLog('SISTEMA', 'Escucha de fondo activada. Listo para recibir comandos y doble aplauso.', 'success');
     
-    // Check volume peaks every 20ms
+    // Check volume peaks every 20ms using adaptive thresholding
+    let volumeHistory = [];
+    const historyLength = 15; // ~300ms of audio history
+
     setInterval(() => {
       bgAnalyser.getByteTimeDomainData(dataArray);
       let maxVal = 0;
@@ -486,13 +489,28 @@ async function startBackgroundListening() {
       }
       const volume = maxVal / 128;
       
+      // Calculate average background volume
+      let sum = 0;
+      for (let i = 0; i < volumeHistory.length; i++) {
+        sum += volumeHistory[i];
+      }
+      const avgVolume = volumeHistory.length > 0 ? (sum / volumeHistory.length) : 0.05;
+
+      // Add to history
+      volumeHistory.push(volume);
+      if (volumeHistory.length > historyLength) {
+        volumeHistory.shift();
+      }
+
       const isSpeakingState = arcReactor.className.includes('reactor-speaking');
       const now = Date.now();
       
-      // Spike threshold of 0.45, with a 180ms-800ms double clap window
-      if (volume > 0.45 && !isSpeakingState && (now - lastClapTime) > 180) {
+      // A clap is when volume spikes above 0.35 AND is at least 3.5x louder than the background noise
+      const isSpike = volume > 0.35 && volume > (avgVolume * 3.5);
+
+      if (isSpike && !isSpeakingState && (now - lastClapTime) > 200) {
         const elapsed = now - lastClapTime;
-        if (elapsed < 800) {
+        if (elapsed < 1000) {
           triggerDoubleClap();
         }
         lastClapTime = now;
@@ -523,11 +541,41 @@ async function triggerDoubleClap() {
   } catch (err) {
     console.error('Failed to notify backend:', err);
   }
+
+  // Automatically wake up J.A.R.V.I.S. and start listening
+  setTimeout(() => {
+    if (recognition && !isListening) {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance("Dígame, señor.");
+        utterance.lang = 'es-ES';
+        utterance.pitch = 0.85;
+        utterance.rate = 1.1;
+        utterance.volume = 1.0;
+        
+        utterance.onend = () => {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.log("Speech recognition failed to start or already active:", e);
+          }
+        };
+        window.speechSynthesis.speak(utterance);
+      } else {
+        try {
+          recognition.start();
+        } catch (e) {}
+      }
+    }
+  }, 400);
 }
 
-// Start background listening on first interaction
+// Start background listening on first interaction (as a fallback)
 document.body.addEventListener('click', () => {
   startBackgroundListening();
 }, { once: true });
 
-window.onload = init;
+window.onload = () => {
+  init();
+  startBackgroundListening(); // Attempt immediate activation
+};

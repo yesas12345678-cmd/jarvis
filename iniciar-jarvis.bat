@@ -17,6 +17,6 @@ if %errorlevel% neq 0 (
 
 :: Try to launch Chrome in App Mode (borderless window)
 echo [SISTEMA] Lanzando interfaz en modo aplicación...
-start "" "chrome.exe" --app=http://localhost:3001
+start "" "chrome.exe" --app=http://localhost:3001 --autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream
 
 exit
