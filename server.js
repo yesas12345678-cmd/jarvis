@@ -262,6 +262,24 @@ Example JSON response:
   }
 });
 
+// Endpoint: Toggle Fullscreen via PowerShell (for background wake)
+app.post('/api/double-clap', (req, res) => {
+  console.log('Double clap event received from client. Toggling fullscreen...');
+  const psScript = `
+    $wshell = New-Object -ComObject WScript.Shell;
+    if ($wshell.AppActivate("J.A.R.V.I.S. - Stark Industries OS")) {
+      Start-Sleep -m 50
+      $wshell.SendKeys("{F11}")
+    }
+  `;
+  exec(`powershell -Command "${psScript.replace(/\n/g, ' ')}"`, (err) => {
+    if (err) {
+      console.error('Failed to toggle fullscreen via PowerShell:', err);
+    }
+  });
+  res.json({ success: true });
+});
+
 // Start Server
 app.listen(PORT, () => {
   console.log(`=================================================`);

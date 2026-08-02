@@ -444,6 +444,84 @@ function init() {
   drawWaveform();
   
   addConsoleLog('SISTEMA', 'Sistemas cargados completamente. Bienvenidos.', 'success');
+  addConsoleLog('SISTEMA', 'Haga clic en la pantalla para activar la escucha de fondo y el detector de aplausos.', 'system');
 }
+
+// Background listening and double clap detection
+let lastClapTime = 0;
+let micStream = null;
+
+async function startBackgroundListening() {
+  try {
+    initAudio();
+    if (micStream) return; // already listening
+    
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = stream;
+    
+    // Create a separate stream source and analyser for background audio analysis
+    const source = audioCtx.createMediaStreamSource(stream);
+    const bgAnalyser = audioCtx.createAnalyser();
+    bgAnalyser.fftSize = 256;
+    source.connect(bgAnalyser);
+    
+    const bufferLength = bgAnalyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    addConsoleLog('SISTEMA', 'Escucha de fondo activada. Listo para recibir comandos y doble aplauso.', 'success');
+    
+    // Check volume peaks every 20ms
+    setInterval(() => {
+      bgAnalyser.getByteTimeDomainData(dataArray);
+      let maxVal = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const val = Math.abs(dataArray[i] - 128);
+        if (val > maxVal) maxVal = val;
+      }
+      const volume = maxVal / 128;
+      
+      const isSpeakingState = arcReactor.className.includes('reactor-speaking');
+      const now = Date.now();
+      
+      // Spike threshold of 0.45, with a 180ms-800ms double clap window
+      if (volume > 0.45 && !isSpeakingState && (now - lastClapTime) > 180) {
+        const elapsed = now - lastClapTime;
+        if (elapsed < 800) {
+          triggerDoubleClap();
+        }
+        lastClapTime = now;
+      }
+    }, 20);
+    
+  } catch (err) {
+    console.warn('Microphone access denied or error:', err);
+    addConsoleLog('SISTEMA', 'Acceso al micrófono denegado para escucha de fondo.', 'error');
+  }
+}
+
+async function triggerDoubleClap() {
+  addConsoleLog('SISTEMA', 'Doble aplauso detectado. Solicitando pantalla completa...', 'success');
+  
+  // Try frontend fullscreen
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {
+      console.log('Fullscreen rejected by browser. Relying on backend OS script.');
+    });
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+  
+  // Call backend to trigger PowerShell OS F11 keypress bypass
+  try {
+    await fetch('/api/double-clap', { method: 'POST' });
+  } catch (err) {
+    console.error('Failed to notify backend:', err);
+  }
+}
+
+// Start background listening on first interaction
+document.body.addEventListener('click', () => {
+  startBackgroundListening();
+}, { once: true });
 
 window.onload = init;
