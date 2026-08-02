@@ -99,6 +99,19 @@ function executeSystemAction(action) {
         exec('start "" "https://www.google.com"');
       } else if (param === 'explorer') {
         exec('explorer');
+      } else if (param) {
+        // Try launching the custom app name directly using start (handles shortcuts, path executables)
+        const sanitizedParam = param.replace(/[^a-zA-Z0-9-_\s.]/g, '');
+        exec(`start "" "${sanitizedParam}"`, (err) => {
+          if (err) {
+            // Try with .exe extension
+            exec(`start "" "${sanitizedParam}.exe"`, (err2) => {
+              if (err2) {
+                console.error(`Failed to launch custom app "${sanitizedParam}":`, err2);
+              }
+            });
+          }
+        });
       }
       break;
     case 'open_url':
@@ -155,16 +168,14 @@ You MUST respond strictly in JSON format with the following keys:
 2. 'action': An object representing a local system command to run, or null if no command is needed.
 
 Supported Actions:
-- {"type": "open_app", "param": "calculator"} -> Open Windows Calculator
-- {"type": "open_app", "param": "notepad"} -> Open Notepad
-- {"type": "open_app", "param": "browser"} -> Open Web Browser
-- {"type": "open_app", "param": "explorer"} -> Open File Explorer
+- {"type": "open_app", "param": "app_name"} -> Open any app by name (e.g., calculator, notepad, spotify, discord, steam, sky launcher, chrome)
 - {"type": "open_url", "param": "domain_or_url"} -> Open a website (e.g. youtube.com, google.com)
 - {"type": "open_folder", "param": "downloads"} -> Open Downloads folder
 - {"type": "open_folder", "param": "projects"} -> Open c:\\PROYECTOS folder
 - {"type": "volume_up", "param": null} -> Increase system volume
 - {"type": "volume_down", "param": null} -> Decrease system volume
 - {"type": "mute", "param": null} -> Mute/unmute volume
+- {"type": "stop", "param": null} -> Turn off, exit fullscreen, and put JARVIS in standby mode (triggered by stop, standby, apágate, detente)
 
 Example JSON response:
 {
@@ -196,7 +207,12 @@ Example JSON response:
     
     let parsedResponse;
     try {
-      parsedResponse = JSON.parse(textResponse);
+      let cleanText = textResponse.trim();
+      if (cleanText.startsWith('```')) {
+        cleanText = cleanText.replace(/^```(?:json)?\n?/i, '');
+        cleanText = cleanText.replace(/\n?```$/, '');
+      }
+      parsedResponse = JSON.parse(cleanText.trim());
     } catch (e) {
       console.error('Failed to parse JSON response from Gemini:', textResponse);
       parsedResponse = {

@@ -377,6 +377,24 @@ async function sendCommandToJarvis(commandText) {
 
     if (data.action) {
       addConsoleLog('SISTEMA', `Acción ejecutada: [${data.action.type.toUpperCase()}] ${data.action.param || ''}`, 'success');
+      
+      if (data.action.type === 'stop') {
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+        if (audioSource) {
+          try { audioSource.stop(); } catch (e) {}
+        }
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        if (recognition) {
+          recognition.stop();
+        }
+        setReactorState('idle');
+        addConsoleLog('SISTEMA', 'NÚCLEO EN ESPERA. Listo para el próximo doble aplauso.', 'success');
+        return;
+      }
     }
 
     if (data.audio) {
