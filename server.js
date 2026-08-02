@@ -205,6 +205,43 @@ function tryRepairAndParseJSON(jsonStr) {
   return { reply, action };
 }
 
+// Reusable ElevenLabs TTS Synthesizer
+async function synthesizeSpeech(text) {
+  if (!process.env.ELEVENLABS_API_KEY || !text) return null;
+  try {
+    const voiceId = process.env.ELEVENLABS_VOICE_ID || 'cjVigY5qzO86Huf0OWal'; // Eric (smooth, soft male)
+    const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+
+    const ttsResponse = await fetch(elevenLabsUrl, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text: text,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: {
+          stability: 0.75,
+          similarity_boost: 0.75
+        }
+      })
+    });
+
+    if (ttsResponse.ok) {
+      const arrayBuffer = await ttsResponse.arrayBuffer();
+      return Buffer.from(arrayBuffer).toString('base64');
+    } else {
+      const errText = await ttsResponse.text();
+      console.error(`ElevenLabs error: ${ttsResponse.status} - ${errText}`);
+      return null;
+    }
+  } catch (ttsErr) {
+    console.error('Failed to synthesize speech via ElevenLabs:', ttsErr);
+    return null;
+  }
+}
+
 // Endpoint: Process user voice or text command
 app.post('/api/voice-command', async (req, res) => {
   const { command } = req.body;
@@ -272,42 +309,8 @@ Example JSON response:
       executeSystemAction(parsedResponse.action);
     }
 
-    // Call ElevenLabs for TTS
-    let audioBase64 = null;
-    if (process.env.ELEVENLABS_API_KEY && parsedResponse.reply) {
-      try {
-        // Antoni voice ID is ErXwobaYiN019PkySvjV (refined, good quality)
-        // Alternatively, Rachel is 21m00Tcm4TlvDq8ikWAM, Adam is pNInz6obpgq9S3JmKWzz
-        const voiceId = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpgDQGcFmaJgB'; 
-        const elevenLabsUrl = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
-
-        const ttsResponse = await fetch(elevenLabsUrl, {
-          method: 'POST',
-          headers: {
-            'xi-api-key': process.env.ELEVENLABS_API_KEY,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            text: parsedResponse.reply,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: {
-              stability: 0.75,
-              similarity_boost: 0.75
-            }
-          })
-        });
-
-        if (ttsResponse.ok) {
-          const arrayBuffer = await ttsResponse.arrayBuffer();
-          audioBase64 = Buffer.from(arrayBuffer).toString('base64');
-        } else {
-          const errText = await ttsResponse.text();
-          console.error(`ElevenLabs error: ${ttsResponse.status} - ${errText}`);
-        }
-      } catch (ttsErr) {
-        console.error('Failed to synthesize speech via ElevenLabs:', ttsErr);
-      }
-    }
+    // Call ElevenLabs for TTS using the reusable helper
+    const audioBase64 = await synthesizeSpeech(parsedResponse.reply);
 
     res.json({
       reply: parsedResponse.reply,
@@ -337,6 +340,16 @@ app.post('/api/double-clap', (req, res) => {
     exec(`powershell -Command "${psScript.replace(/\n/g, ' ')}"`);
   });
   res.json({ success: true });
+});
+
+// Endpoint: Generate custom TTS audio using the Eric voice
+app.post('/api/tts', async (req, res) => {
+  const { text } = req.body;
+  if (!text) {
+    return res.status(400).json({ error: 'Text parameter is required.' });
+  }
+  const audio = await synthesizeSpeech(text);
+  res.json({ audio });
 });
 
 // Start Server

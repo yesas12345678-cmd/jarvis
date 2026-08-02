@@ -102,24 +102,39 @@ if (SpeechRecognition) {
           console.error(e);
         }
         
-        // Speak wake confirmation
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance("Dígame, señor.");
-          utterance.lang = 'es-ES';
-          utterance.pitch = 0.85;
-          utterance.rate = 1.1;
-          utterance.volume = 1.0;
-          utterance.onend = () => {
+        // Speak wake confirmation using ElevenLabs, with native SpeechSynthesis as fallback
+        try {
+          const ttsRes = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: "Dígame, señor." })
+          });
+          const ttsData = await ttsRes.json();
+          if (ttsData.audio) {
+            await playVoiceResponse(ttsData.audio);
+          } else {
+            throw new Error('TTS audio unavailable');
+          }
+        } catch (ttsErr) {
+          console.warn('ElevenLabs wake confirmation failed, using browser fallback:', ttsErr);
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance("Dígame, señor.");
+            utterance.lang = 'es-ES';
+            utterance.pitch = 0.85;
+            utterance.rate = 1.1;
+            utterance.volume = 1.0;
+            utterance.onend = () => {
+              jarvisState = 'listening';
+              setReactorState('listening');
+              try { recognition.start(); } catch (e) {}
+            };
+            window.speechSynthesis.speak(utterance);
+          } else {
             jarvisState = 'listening';
             setReactorState('listening');
             try { recognition.start(); } catch (e) {}
-          };
-          window.speechSynthesis.speak(utterance);
-        } else {
-          jarvisState = 'listening';
-          setReactorState('listening');
-          try { recognition.start(); } catch (e) {}
+          }
         }
       }
     } else if (jarvisState === 'listening') {
