@@ -62,8 +62,10 @@ if (SpeechRecognition) {
 
   recognition.onstart = () => {
     isListening = true;
-    speechBtn.classList.add('listening');
-    speechBtn.querySelector('.btn-text').innerText = 'ESCUCHANDO...';
+    if (speechBtn) {
+      speechBtn.classList.add('listening');
+      speechBtn.querySelector('.btn-text').innerText = 'ESCUCHANDO...';
+    }
     arcReactor.className = 'reactor-listening';
     voiceStatus.innerText = 'MICRÓFONO ACTIVO';
     addConsoleLog('SISTEMA', 'Micrófono abierto. Hable ahora, señor.', 'system');
@@ -71,8 +73,10 @@ if (SpeechRecognition) {
 
   recognition.onend = () => {
     isListening = false;
-    speechBtn.classList.remove('listening');
-    speechBtn.querySelector('.btn-text').innerText = 'INICIAR COMANDO';
+    if (speechBtn) {
+      speechBtn.classList.remove('listening');
+      speechBtn.querySelector('.btn-text').innerText = 'INICIAR COMANDO';
+    }
   };
 
   recognition.onresult = async (event) => {
@@ -87,7 +91,9 @@ if (SpeechRecognition) {
     setReactorState('idle');
   };
 } else {
-  speechBtn.style.display = 'none';
+  if (speechBtn) {
+    speechBtn.style.display = 'none';
+  }
   addConsoleLog('SISTEMA', 'El reconocimiento de voz no está soportado en este navegador. Utilice la consola escrita.', 'error');
 }
 
@@ -388,18 +394,20 @@ async function sendCommandToJarvis(commandText) {
 }
 
 // Event Listeners
-speechBtn.addEventListener('click', () => {
-  initAudio();
-  if (isListening) {
-    recognition.stop();
-  } else {
-    // Reset browser synthesis if it's currently speaking
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+if (speechBtn) {
+  speechBtn.addEventListener('click', () => {
+    initAudio();
+    if (isListening) {
+      recognition.stop();
+    } else {
+      // Reset browser synthesis if it's currently speaking
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      recognition.start();
     }
-    recognition.start();
-  }
-});
+  });
+}
 
 arcReactor.addEventListener('click', () => {
   initAudio();

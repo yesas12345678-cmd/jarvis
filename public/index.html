@@ -113,11 +113,38 @@
           
           <!-- Outer circular elements -->
           <div class="outer-decor-ring"></div>
+          <div class="degree-scale">
+            <span class="degree-tick d0">000°</span>
+            <span class="degree-tick d90">090°</span>
+            <span class="degree-tick d180">180°</span>
+            <span class="degree-tick d270">270°</span>
+          </div>
+          
+          <!-- Hacker Telemetry Side Panels -->
+          <div class="hacker-telemetry-panel left-telemetry">
+            <div class="telemetry-item">SEC_CORE: ACTIVE</div>
+            <div class="telemetry-item">NET_STAT: STABLE</div>
+            <div class="telemetry-item">PORT_FEED: 3001</div>
+            <div class="telemetry-item">BUFF_GAIN: 2.0X</div>
+            <div class="telemetry-item">DECIBELS: -12dB</div>
+          </div>
+
+          <div class="hacker-telemetry-panel right-telemetry">
+            <div class="telemetry-item">AI_NEURAL: GEMINI_3.5</div>
+            <div class="telemetry-item">TTS_SYNTH: ELEVEN</div>
+            <div class="telemetry-item">VOX_STATUS: READY</div>
+            <div class="telemetry-item">SYS_ACCESS: TOTAL</div>
+            <div class="telemetry-item">COM_KEY: F11_SYS</div>
+          </div>
+
+          <!-- Radar sweep glow effect -->
+          <div class="radar-sweep"></div>
           
           <!-- Reactor Outer Dial -->
           <div class="dial-container">
             <div class="tech-dial dial-clockwise"></div>
             <div class="tech-dial dial-counter-clockwise"></div>
+            <div class="tech-dial dial-grid-ticks"></div>
           </div>
 
           <!-- Main Arc Reactor -->
@@ -144,18 +171,12 @@
               <div class="triangle t10"></div>
             </div>
             
-            <!-- Core Core Center -->
+            <!-- Core Center -->
             <div class="core-center">
               <div class="core-inner-glow"></div>
               <div class="core-label">JARVIS</div>
             </div>
           </div>
-
-          <!-- Click to Speak Action Button -->
-          <button id="speech-btn" class="glow-button">
-            <span class="btn-icon">🎙️</span>
-            <span class="btn-text">INICIAR COMANDO</span>
-          </button>
 
           <!-- Real-Time Waveform Visualizer -->
           <div class="visualizer-container">
