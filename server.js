@@ -216,6 +216,8 @@ Example JSON response:
         cleanText = cleanText.replace(/^```(?:json)?\n?/i, '');
         cleanText = cleanText.replace(/\n?```$/, '');
       }
+      // Fix malformed JSON where parameter value is blank before a closing bracket or comma
+      cleanText = cleanText.replace(/:\s*([,}])/g, ':null$1');
       parsedResponse = JSON.parse(cleanText.trim());
     } catch (e) {
       console.error('Failed to parse JSON response from Gemini:', textResponse);

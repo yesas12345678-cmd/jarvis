@@ -53,6 +53,7 @@ resizeCanvas();
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isListening = false;
+let jarvisState = 'standby'; // standby, listening, speaking
 
 if (SpeechRecognition) {
   recognition = new SpeechRecognition();
@@ -62,33 +63,105 @@ if (SpeechRecognition) {
 
   recognition.onstart = () => {
     isListening = true;
-    if (speechBtn) {
-      speechBtn.classList.add('listening');
-      speechBtn.querySelector('.btn-text').innerText = 'ESCUCHANDO...';
+    if (jarvisState === 'standby') {
+      arcReactor.className = 'reactor-idle';
+      voiceStatus.innerText = 'NÚCLEO EN STANDBY';
+    } else if (jarvisState === 'listening') {
+      arcReactor.className = 'reactor-listening';
+      voiceStatus.innerText = 'MICRÓFONO ACTIVO';
+      addConsoleLog('SISTEMA', 'Micrófono abierto. Hable ahora, señor.', 'system');
     }
-    arcReactor.className = 'reactor-listening';
-    voiceStatus.innerText = 'MICRÓFONO ACTIVO';
-    addConsoleLog('SISTEMA', 'Micrófono abierto. Hable ahora, señor.', 'system');
   };
 
   recognition.onend = () => {
     isListening = false;
-    if (speechBtn) {
-      speechBtn.classList.remove('listening');
-      speechBtn.querySelector('.btn-text').innerText = 'INICIAR COMANDO';
+    // Auto-restart recognition if not actively speaking
+    if (jarvisState !== 'speaking') {
+      setTimeout(() => {
+        try { recognition.start(); } catch (e) {}
+      }, 300);
     }
   };
 
   recognition.onresult = async (event) => {
     const transcript = event.results[0][0].transcript;
-    addConsoleLog('USUARIO', transcript, 'user');
-    await sendCommandToJarvis(transcript);
+    const lowerText = transcript.toLowerCase().trim();
+
+    if (jarvisState === 'standby') {
+      // Check for wake phrases
+      if (lowerText.includes('hello jarvis') || lowerText.includes('hola jarvis') || lowerText.includes('hello jarby') || lowerText.includes('esclusa jarvis') || lowerText.includes('alo jarvis') || lowerText.includes('ey jarvis')) {
+        addConsoleLog('USUARIO', transcript, 'user');
+        addConsoleLog('SISTEMA', 'Frase de activación detectada.', 'success');
+        
+        jarvisState = 'speaking';
+        
+        // Move window to current desktop and toggle fullscreen
+        try {
+          await fetch('/api/double-clap', { method: 'POST' });
+        } catch (e) {
+          console.error(e);
+        }
+        
+        // Speak wake confirmation
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance("Dígame, señor.");
+          utterance.lang = 'es-ES';
+          utterance.pitch = 0.85;
+          utterance.rate = 1.1;
+          utterance.volume = 1.0;
+          utterance.onend = () => {
+            jarvisState = 'listening';
+            setReactorState('listening');
+            try { recognition.start(); } catch (e) {}
+          };
+          window.speechSynthesis.speak(utterance);
+        } else {
+          jarvisState = 'listening';
+          setReactorState('listening');
+          try { recognition.start(); } catch (e) {}
+        }
+      }
+    } else if (jarvisState === 'listening') {
+      addConsoleLog('USUARIO', transcript, 'user');
+      
+      // Check for sleep phrases
+      if (lowerText.includes('stop jarvis') || lowerText.includes('apágate jarvis') || lowerText.includes('detente jarvis') || lowerText.includes('standby jarvis')) {
+        jarvisState = 'standby';
+        
+        // Send standby request to backend
+        try {
+          await fetch('/api/voice-command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: 'apágate' })
+          });
+        } catch (e) {}
+        
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        
+        setReactorState('idle');
+        addConsoleLog('SISTEMA', 'JARVIS en modo de espera. Diga "Hello Jarvis" para despertar.', 'success');
+        
+        // Stop recognition to let it restart in standby mode
+        try { recognition.stop(); } catch (e) {}
+      } else {
+        jarvisState = 'speaking';
+        try { recognition.stop(); } catch (e) {}
+        await sendCommandToJarvis(transcript);
+      }
+    }
   };
 
   recognition.onerror = (event) => {
     console.error('Speech recognition error:', event.error);
-    addConsoleLog('ERROR', `Error de reconocimiento: ${event.error}`, 'error');
-    setReactorState('idle');
+    if (jarvisState !== 'speaking') {
+      setTimeout(() => {
+        try { recognition.start(); } catch (e) {}
+      }, 1000);
+    }
   };
 } else {
   if (speechBtn) {
@@ -304,7 +377,9 @@ async function playVoiceResponse(base64Audio) {
     audioSource.start(0);
 
     audioSource.onended = () => {
-      setReactorState('idle');
+      jarvisState = 'listening';
+      setReactorState('listening');
+      try { recognition.start(); } catch (e) {}
     };
   } catch (e) {
     console.error('Error decoding audio response:', e);
@@ -339,12 +414,16 @@ function speakWithBrowserSynthesis(text) {
 
     utterance.onend = () => {
       clearInterval(simInterval);
-      setReactorState('idle');
+      jarvisState = 'listening';
+      setReactorState('listening');
+      try { recognition.start(); } catch (e) {}
     };
 
     utterance.onerror = () => {
       clearInterval(simInterval);
-      setReactorState('idle');
+      jarvisState = 'listening';
+      setReactorState('listening');
+      try { recognition.start(); } catch (e) {}
     };
 
     window.speechSynthesis.speak(utterance);
@@ -596,12 +675,12 @@ async function triggerDoubleClap() {
   }, 400);
 }
 
-// Start background listening on first interaction (as a fallback)
+// Start voice activation on first click (as a backup)
 document.body.addEventListener('click', () => {
-  startBackgroundListening();
+  try { recognition.start(); } catch(e){}
 }, { once: true });
 
 window.onload = () => {
   init();
-  startBackgroundListening(); // Attempt immediate activation
+  try { recognition.start(); } catch(e){}
 };
