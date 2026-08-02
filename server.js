@@ -149,6 +149,58 @@ function executeSystemAction(action) {
   }
 }
 
+// Robust JSON repair and parse function for Gemini responses
+function tryRepairAndParseJSON(jsonStr) {
+  let text = jsonStr.trim();
+  
+  // Extract content between first '{' and last '}'
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.substring(firstBrace, lastBrace + 1);
+  }
+  
+  // Fix empty parameter values like ,"param":}
+  text = text.replace(/:\s*([,}])/g, ':null$1');
+
+  // Try parsing raw/isolated text
+  try {
+    return JSON.parse(text);
+  } catch (e) {}
+  
+  // Try recovery options
+  const recoveryOptions = [
+    text + '}',
+    text + '}}',
+    text + '"}',
+    text + '"}}'
+  ];
+  
+  for (const opt of recoveryOptions) {
+    try {
+      return JSON.parse(opt);
+    } catch (e) {}
+  }
+  
+  // Fallback: Regex extraction
+  console.warn('JSON parsing failed completely. Falling back to regex extraction.');
+  const replyMatch = jsonStr.match(/"?reply"?\s*:\s*"([\s\S]*?)"/i);
+  const reply = replyMatch ? replyMatch[1] : jsonStr.replace(/[{}\n\r"]/g, '').trim();
+  
+  let action = null;
+  const actionTypeMatch = jsonStr.match(/"?type"?\s*:\s*"([^"]+)"/i);
+  if (actionTypeMatch) {
+    const actionParamMatch = jsonStr.match(/"?param"?\s*:\s*(?:"([^"]*)"|(null))/i);
+    const paramValue = actionParamMatch ? (actionParamMatch[2] === 'null' ? null : actionParamMatch[1]) : null;
+    action = {
+      type: actionTypeMatch[1],
+      param: paramValue
+    };
+  }
+  
+  return { reply, action };
+}
+
 // Endpoint: Process user voice or text command
 app.post('/api/voice-command', async (req, res) => {
   const { command } = req.body;
@@ -206,28 +258,7 @@ Example JSON response:
     const responseResult = await chatSession.sendMessage(command);
     const textResponse = responseResult.response.text();
     
-    let parsedResponse;
-    try {
-      let cleanText = textResponse.trim();
-      const firstBrace = cleanText.indexOf('{');
-      const lastBrace = cleanText.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-      }
-      // Fix malformed JSON where parameter value is blank before a closing bracket or comma
-      cleanText = cleanText.replace(/:\s*([,}])/g, ':null$1');
-      parsedResponse = JSON.parse(cleanText.trim());
-    } catch (e) {
-      console.error('Failed to parse JSON response from Gemini:', textResponse);
-      // Try to extract only the actual reply text using regex to avoid leaking JSON keys to the user
-      const replyMatch = textResponse.match(/"?reply"?\s*:\s*"([\s\S]*?)"/i);
-      const extractedReply = replyMatch ? replyMatch[1] : textResponse.replace(/[{}\n\r"]/g, '').trim();
-      
-      parsedResponse = {
-        reply: extractedReply,
-        action: null
-      };
-    }
+    const parsedResponse = tryRepairAndParseJSON(textResponse);
 
     console.log(`JARVIS Response: "${parsedResponse.reply}"`);
     console.log(`JARVIS Action:`, parsedResponse.action);
