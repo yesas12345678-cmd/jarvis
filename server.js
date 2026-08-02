@@ -209,9 +209,10 @@ Example JSON response:
     let parsedResponse;
     try {
       let cleanText = textResponse.trim();
-      if (cleanText.startsWith('```')) {
-        cleanText = cleanText.replace(/^```(?:json)?\n?/i, '');
-        cleanText = cleanText.replace(/\n?```$/, '');
+      const firstBrace = cleanText.indexOf('{');
+      const lastBrace = cleanText.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        cleanText = cleanText.substring(firstBrace, lastBrace + 1);
       }
       // Fix malformed JSON where parameter value is blank before a closing bracket or comma
       cleanText = cleanText.replace(/:\s*([,}])/g, ':null$1');
