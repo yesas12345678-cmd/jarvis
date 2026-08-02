@@ -4,6 +4,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { exec } from 'child_process';
+import dns from 'dns';
+
+// Force Node.js to resolve IPv4 first to avoid IPv6 timeout fetch failed errors
+dns.setDefaultResultOrder('ipv4first');
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Load environment variables
