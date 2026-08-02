@@ -1,0 +1,961 @@
+/* ==========================================================================
+   J.A.R.V.I.S. Core Design System & Holographic HUD Layout
+   ========================================================================== */
+
+:root {
+  --color-bg: #020914;
+  --color-cyan: #00d2ff;
+  --color-cyan-glow: rgba(0, 210, 255, 0.5);
+  --color-cyan-dim: rgba(0, 100, 150, 0.3);
+  --color-dark-blue: #0b1a30;
+  --color-danger: #ff3c3c;
+  --color-danger-glow: rgba(255, 60, 60, 0.5);
+  --color-success: #00ff66;
+  --font-hud: 'Orbitron', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-body: 'Inter', sans-serif;
+  --panel-border: 1px solid rgba(0, 210, 255, 0.25);
+  --panel-bg: rgba(2, 9, 20, 0.75);
+  --glass-glow: 0 0 15px rgba(0, 210, 255, 0.15);
+}
+
+/* Global Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: #c4d7ec;
+  font-family: var(--font-body);
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Scanlines and Grid Overlay */
+.scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.2) 50%
+  );
+  background-size: 100% 4px;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+.grid-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(0, 210, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 210, 255, 0.03) 1px, transparent 1px);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* HUD Main Structure */
+.hud-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  padding: 10px;
+  z-index: 2;
+}
+
+/* Header styling */
+.hud-header {
+  height: 50px;
+  border-bottom: 2px solid var(--color-cyan);
+  background: rgba(2, 9, 20, 0.85);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  font-family: var(--font-hud);
+  box-shadow: 0 0 20px rgba(0, 210, 255, 0.2);
+}
+
+.system-title {
+  color: var(--color-cyan);
+  font-weight: 900;
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+}
+
+.system-status {
+  background: rgba(0, 255, 102, 0.15);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  margin-left: 15px;
+  border-radius: 3px;
+  letter-spacing: 1px;
+}
+
+.stark-logo {
+  font-size: 1.3rem;
+  font-weight: 900;
+  letter-spacing: 6px;
+  color: #fff;
+  text-shadow: 0 0 10px var(--color-cyan);
+}
+
+.user-profile {
+  font-size: 0.8rem;
+  letter-spacing: 1px;
+  color: var(--color-cyan);
+}
+
+/* Main Content Area */
+.hud-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 340px 1fr 340px;
+  gap: 15px;
+  padding: 15px 0;
+  overflow: hidden;
+}
+
+/* Core Panels */
+.hud-panel {
+  background: var(--panel-bg);
+  border: var(--panel-border);
+  border-radius: 6px;
+  padding: 15px;
+  box-shadow: var(--glass-glow);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Corner bracket decorations */
+.hud-panel::before, .hud-panel::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-cyan);
+  pointer-events: none;
+}
+
+.hud-panel::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.hud-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+.panel-title {
+  font-family: var(--font-hud);
+  font-size: 0.95rem;
+  color: var(--color-cyan);
+  border-bottom: 1px solid var(--color-cyan-dim);
+  padding-bottom: 8px;
+  margin-bottom: 15px;
+  letter-spacing: 2px;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   LEFT PANEL - SYSTEM DIAGNOSTICS
+   ========================================================================== */
+.gauge-container {
+  display: flex;
+  justify-content: space-around;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.stat-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 48%;
+}
+
+.stat-label {
+  font-family: var(--font-hud);
+  font-size: 0.7rem;
+  color: #6da2cb;
+  margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+
+/* Circular SVG Progress */
+.circular-progress-wrapper {
+  position: relative;
+  width: 85px;
+  height: 85px;
+}
+
+.circular-progress {
+  transform: rotate(-90deg);
+  width: 100%;
+  height: 100%;
+}
+
+.circular-progress circle {
+  fill: none;
+  stroke-width: 6;
+}
+
+.circular-progress .bg {
+  stroke: rgba(0, 210, 255, 0.1);
+}
+
+.circular-progress .fg {
+  stroke: var(--color-cyan);
+  stroke-dasharray: 251.2; /* 2 * PI * r (r=40) */
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.5s ease;
+  filter: drop-shadow(0 0 4px var(--color-cyan));
+}
+
+.circular-progress .cpu-bar {
+  stroke-dashoffset: 251.2;
+}
+
+.circular-progress .ram-bar {
+  stroke-dashoffset: 251.2;
+}
+
+.gauge-value {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-hud);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 5px var(--color-cyan);
+}
+
+/* Linear progress for CPU fallback */
+.progress-bar-linear {
+  width: 100%;
+  height: 4px;
+  background: rgba(0, 210, 255, 0.1);
+  margin-top: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--color-cyan);
+  transition: width 0.5s ease;
+  box-shadow: 0 0 5px var(--color-cyan);
+}
+
+.ram-details {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  margin-top: 8px;
+  color: #6da2cb;
+}
+
+/* OS details */
+.info-block {
+  border-top: 1px solid var(--color-cyan-dim);
+  padding-top: 15px;
+  margin-bottom: 20px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.info-label {
+  color: #6da2cb;
+}
+
+.info-value {
+  color: var(--color-cyan);
+  text-shadow: 0 0 3px rgba(0, 210, 255, 0.5);
+}
+
+/* CPU Live Bars Graph */
+.live-graph-box {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.bar-graph {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  height: 80px;
+  padding: 5px;
+  border: 1px solid rgba(0, 210, 255, 0.1);
+  background: rgba(2, 9, 20, 0.5);
+  border-radius: 4px;
+}
+
+.graph-bar {
+  width: 9%;
+  background: linear-gradient(to top, rgba(0, 80, 122, 0.4), var(--color-cyan));
+  box-shadow: 0 0 4px rgba(0, 210, 255, 0.3);
+  border-radius: 2px 2px 0 0;
+  transition: height 0.3s ease;
+}
+
+/* ==========================================================================
+   CENTER PANEL - ARC REACTOR CONTROL
+   ========================================================================== */
+.center-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 9, 20, 0.5);
+}
+
+.reactor-wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  justify-content: space-around;
+}
+
+/* Outer rotating rings */
+.outer-decor-ring {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border: 1px dashed rgba(0, 210, 255, 0.15);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: rotateClockwise 45s linear infinite;
+}
+
+.dial-container {
+  position: absolute;
+  width: 290px;
+  height: 290px;
+}
+
+.tech-dial {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.dial-clockwise {
+  border: 3px double rgba(0, 210, 255, 0.2);
+  border-top-color: var(--color-cyan);
+  border-bottom-color: var(--color-cyan);
+  animation: rotateClockwise 25s linear infinite;
+}
+
+.dial-counter-clockwise {
+  top: 10px;
+  left: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
+  border: 1px dashed rgba(0, 210, 255, 0.3);
+  border-left-color: var(--color-cyan);
+  border-right-color: var(--color-cyan);
+  animation: rotateCounterClockwise 12s linear infinite;
+}
+
+/* Arc Reactor Main Graphic */
+#arc-reactor {
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 5;
+  transition: all 0.3s ease;
+}
+
+.reactor-glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 210, 255, 0.2) 0%, transparent 70%);
+  transition: background 0.3s ease;
+}
+
+/* Outer, Middle, Inner rotating notches */
+.ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+.outer-ring {
+  width: 220px;
+  height: 220px;
+  border: 4px solid rgba(0, 210, 255, 0.1);
+  border-top: 4px solid var(--color-cyan);
+  border-bottom: 4px solid var(--color-cyan);
+  animation: rotateClockwise 15s linear infinite;
+}
+
+.middle-ring {
+  width: 180px;
+  height: 180px;
+  border: 2px dashed var(--color-cyan-glow);
+  animation: rotateCounterClockwise 8s linear infinite;
+}
+
+.inner-ring {
+  width: 140px;
+  height: 140px;
+  border: 4px solid rgba(0, 210, 255, 0.15);
+  border-left-color: var(--color-cyan);
+  border-right-color: var(--color-cyan);
+  animation: rotateClockwise 5s linear infinite;
+}
+
+/* Triangles Container */
+.triangles-container {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  animation: rotateClockwise 35s linear infinite;
+}
+
+.triangle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-top: 22px solid var(--color-cyan);
+  filter: drop-shadow(0 0 6px var(--color-cyan));
+  margin-left: -9px;
+  margin-top: -11px;
+  transform-origin: 50% 50%;
+  opacity: 0.75;
+}
+
+/* Placement of 10 Reactor Segments */
+.triangle.t1  { transform: rotate(0deg) translateY(-88px); }
+.triangle.t2  { transform: rotate(36deg) translateY(-88px); }
+.triangle.t3  { transform: rotate(72deg) translateY(-88px); }
+.triangle.t4  { transform: rotate(108deg) translateY(-88px); }
+.triangle.t5  { transform: rotate(144deg) translateY(-88px); }
+.triangle.t6  { transform: rotate(180deg) translateY(-88px); }
+.triangle.t7  { transform: rotate(216deg) translateY(-88px); }
+.triangle.t8  { transform: rotate(252deg) translateY(-88px); }
+.triangle.t9  { transform: rotate(288deg) translateY(-88px); }
+.triangle.t10 { transform: rotate(324deg) translateY(-88px); }
+
+/* Core Center */
+.core-center {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: var(--color-dark-blue);
+  border: 3px solid var(--color-cyan);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 10;
+  box-shadow: inset 0 0 15px rgba(0, 210, 255, 0.6);
+  animation: pulseCore 3s ease-in-out infinite;
+}
+
+.core-inner-glow {
+  position: absolute;
+  width: 80%;
+  height: 80%;
+  background: radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(0,210,255,0.4) 60%, transparent 100%);
+  border-radius: 50%;
+  filter: blur(2px);
+}
+
+.core-label {
+  font-family: var(--font-hud);
+  font-size: 0.8rem;
+  font-weight: 900;
+  color: #fff;
+  z-index: 12;
+  letter-spacing: 2px;
+  text-shadow: 0 0 8px var(--color-cyan);
+}
+
+/* Reactor states */
+.reactor-listening .outer-ring {
+  border-top-color: var(--color-danger);
+  border-bottom-color: var(--color-danger);
+  animation-duration: 4s;
+}
+
+.reactor-listening .triangle {
+  border-top-color: var(--color-danger);
+  filter: drop-shadow(0 0 8px var(--color-danger));
+}
+
+.reactor-listening .core-center {
+  border-color: var(--color-danger);
+  box-shadow: inset 0 0 15px rgba(255, 60, 60, 0.7);
+  animation: pulseCoreDanger 1s ease-in-out infinite;
+}
+
+.reactor-listening .core-inner-glow {
+  background: radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,60,60,0.5) 60%, transparent 100%);
+}
+
+.reactor-speaking .outer-ring {
+  animation-duration: 2s;
+}
+
+.reactor-speaking .middle-ring {
+  animation-duration: 1.5s;
+}
+
+.reactor-speaking .core-center {
+  animation: pulseCoreSpeaking 0.4s ease-in-out infinite alternate;
+}
+
+/* Glow Voice Button */
+.glow-button {
+  background: rgba(0, 210, 255, 0.08);
+  border: 1px solid var(--color-cyan);
+  color: var(--color-cyan);
+  font-family: var(--font-hud);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 10px 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 10px rgba(0, 210, 255, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 6;
+  margin-top: 15px;
+}
+
+.glow-button:hover {
+  background: rgba(0, 210, 255, 0.2);
+  box-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
+  transform: translateY(-2px);
+}
+
+.glow-button:active {
+  transform: translateY(0);
+}
+
+.glow-button.listening {
+  background: rgba(255, 60, 60, 0.15);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  box-shadow: 0 0 20px rgba(255, 60, 60, 0.3);
+  animation: pulseButtonDanger 1.5s infinite;
+}
+
+/* Audio Visualizer Waveform */
+.visualizer-container {
+  width: 90%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 15px;
+}
+
+#waveform-canvas {
+  width: 100%;
+  height: 45px;
+  background: rgba(2, 9, 20, 0.4);
+  border-radius: 4px;
+  border: 1px solid rgba(0, 210, 255, 0.1);
+}
+
+.voice-status {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-cyan);
+  margin-top: 5px;
+  letter-spacing: 3px;
+  text-shadow: 0 0 3px var(--color-cyan-glow);
+}
+
+/* ==========================================================================
+   RIGHT PANEL - ENVIRONMENT SUITE
+   ========================================================================== */
+.time-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 25px;
+  padding: 10px;
+  border: 1px solid rgba(0, 210, 255, 0.15);
+  background: rgba(11, 26, 48, 0.3);
+  border-radius: 4px;
+}
+
+.digital-time {
+  font-family: var(--font-hud);
+  font-size: 1.8rem;
+  color: #fff;
+  text-shadow: 0 0 10px var(--color-cyan);
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.digital-date {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: #6da2cb;
+  margin-top: 5px;
+  letter-spacing: 2px;
+}
+
+.weather-box {
+  background: rgba(11, 26, 48, 0.2);
+  border: 1px solid rgba(0, 210, 255, 0.1);
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 25px;
+}
+
+.weather-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 10px 0;
+}
+
+.weather-main .temp {
+  font-family: var(--font-hud);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 5px var(--color-cyan);
+}
+
+.weather-main .desc {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-cyan);
+}
+
+.weather-details {
+  border-top: 1px solid rgba(0, 210, 255, 0.1);
+  padding-top: 8px;
+}
+
+.w-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  margin-bottom: 6px;
+  color: #6da2cb;
+}
+
+.w-row span:last-child {
+  color: #fff;
+}
+
+/* Network Monitor */
+.network-box {
+  background: rgba(11, 26, 48, 0.2);
+  border: 1px solid rgba(0, 210, 255, 0.1);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.net-grid {
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 0;
+}
+
+.net-stat {
+  display: flex;
+  flex-direction: column;
+  width: 48%;
+}
+
+.net-arrow {
+  font-size: 0.6rem;
+  margin-bottom: 2px;
+}
+
+.net-stat:first-child .net-arrow {
+  color: var(--color-cyan);
+}
+
+.net-stat:last-child .net-arrow {
+  color: var(--color-success);
+}
+
+.net-value {
+  font-family: var(--font-hud);
+  font-size: 0.95rem;
+  color: #fff;
+  font-weight: 700;
+}
+
+.net-lbl {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: #6da2cb;
+  margin-top: 2px;
+}
+
+.net-graph-lines {
+  height: 4px;
+  background: rgba(2, 9, 20, 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+  gap: 2px;
+}
+
+.line-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.up-fill {
+  background: var(--color-cyan);
+  width: 25%;
+}
+
+.down-fill {
+  background: var(--color-success);
+  width: 15%;
+}
+
+/* ==========================================================================
+   FOOTER TERMINAL FEED
+   ========================================================================== */
+.hud-footer {
+  height: 190px;
+  background: var(--panel-bg);
+  border: var(--panel-border);
+  border-radius: 6px;
+  padding: 10px 15px;
+  box-shadow: var(--glass-glow);
+  position: relative;
+}
+
+/* Corner brackets for footer */
+.hud-footer::before, .hud-footer::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-cyan);
+  pointer-events: none;
+}
+
+.hud-footer::before {
+  top: -1px;
+  left: -1px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.hud-footer::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: none;
+  border-top: none;
+}
+
+.console-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  justify-content: space-between;
+}
+
+.console-header {
+  font-family: var(--font-hud);
+  font-size: 0.75rem;
+  color: var(--color-cyan);
+  border-bottom: 1px solid var(--color-cyan-dim);
+  padding-bottom: 5px;
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: 1px;
+}
+
+.feed-indicator {
+  color: var(--color-success);
+  animation: blink 2s infinite;
+}
+
+/* Logs console list */
+.console-logs {
+  flex: 1;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  padding: 8px 0;
+  margin: 5px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Scrollbar styling */
+.console-logs::-webkit-scrollbar {
+  width: 4px;
+}
+.console-logs::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1);
+}
+.console-logs::-webkit-scrollbar-thumb {
+  background: var(--color-cyan-glow);
+  border-radius: 2px;
+}
+
+.log-entry {
+  line-height: 1.2;
+}
+
+.log-entry.system { color: #6da2cb; }
+.log-entry.success { color: var(--color-success); }
+.log-entry.user { color: #fff; }
+.log-entry.jarvis { color: var(--color-cyan); text-shadow: 0 0 2px rgba(0, 210, 255, 0.4); }
+.log-entry.error { color: var(--color-danger); }
+
+/* Command Form */
+.console-input-form {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--color-cyan-dim);
+  padding-top: 8px;
+}
+
+.prompt-arrow {
+  color: var(--color-cyan);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  margin-right: 10px;
+}
+
+#command-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  caret-color: var(--color-cyan);
+}
+
+#command-input::placeholder {
+  color: rgba(109, 162, 203, 0.5);
+}
+
+.console-submit-btn {
+  background: var(--color-cyan);
+  border: none;
+  color: var(--color-bg);
+  font-family: var(--font-hud);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 15px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  letter-spacing: 1px;
+}
+
+.console-submit-btn:hover {
+  opacity: 0.9;
+}
+
+/* ==========================================================================
+   ANIMATIONS KEYFRAMES
+   ========================================================================== */
+@keyframes rotateClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes rotateCounterClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes pulseCore {
+  0% { transform: scale(1); filter: drop-shadow(0 0 10px var(--color-cyan-glow)); }
+  50% { transform: scale(1.04); filter: drop-shadow(0 0 20px var(--color-cyan)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 10px var(--color-cyan-glow)); }
+}
+
+@keyframes pulseCoreDanger {
+  0% { transform: scale(1); filter: drop-shadow(0 0 10px var(--color-danger-glow)); }
+  50% { transform: scale(1.08); filter: drop-shadow(0 0 25px var(--color-danger)); }
+  100% { transform: scale(1); filter: drop-shadow(0 0 10px var(--color-danger-glow)); }
+}
+
+@keyframes pulseCoreSpeaking {
+  from { transform: scale(1); filter: drop-shadow(0 0 15px var(--color-cyan-glow)); }
+  to { transform: scale(1.06); filter: drop-shadow(0 0 30px var(--color-cyan)); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+.blinking {
+  animation: blink 2.5s infinite;
+}
+
+@keyframes pulseButtonDanger {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 60, 60, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(255, 60, 60, 0.5); }
+}

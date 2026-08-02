@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>J.A.R.V.I.S. - Stark Industries OS</title>
+  <!-- Google Fonts for Futuristic Look -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Futuristic Scanlines and Grid Overlay -->
+  <div class="scanlines"></div>
+  <div class="grid-bg"></div>
+
+  <!-- HUD Interface Container -->
+  <div class="hud-container">
+    
+    <!-- HEADER BAR -->
+    <header class="hud-header">
+      <div class="header-left">
+        <span class="system-title">JARVIS OS v2.5</span>
+        <span class="system-status blinking">CORE ONLINE</span>
+      </div>
+      <div class="header-center">
+        <div class="stark-logo">STARK INDUSTRIES</div>
+      </div>
+      <div class="header-right">
+        <span class="user-profile">USER: Alejandro Montoya</span>
+      </div>
+    </header>
+
+    <!-- MAIN BODY GRID -->
+    <main class="hud-main">
+
+      <!-- LEFT PANEL: SYSTEM DIAGNOSTICS -->
+      <section class="hud-panel left-panel">
+        <h2 class="panel-title">SYSTEM DIAGNOSTICS</h2>
+        
+        <div class="gauge-container">
+          <!-- CPU GAUGE -->
+          <div class="stat-box">
+            <span class="stat-label">CPU USAGE</span>
+            <div class="circular-progress-wrapper">
+              <svg class="circular-progress" viewBox="0 0 100 100">
+                <circle class="bg" cx="50" cy="50" r="40"></circle>
+                <circle class="fg cpu-bar" cx="50" cy="50" r="40"></circle>
+              </svg>
+              <div class="gauge-value" id="cpu-value">0%</div>
+            </div>
+            <div class="progress-bar-linear">
+              <div class="progress-fill cpu-fill" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- RAM GAUGE -->
+          <div class="stat-box">
+            <span class="stat-label">RAM UTILIZATION</span>
+            <div class="circular-progress-wrapper">
+              <svg class="circular-progress" viewBox="0 0 100 100">
+                <circle class="bg" cx="50" cy="50" r="40"></circle>
+                <circle class="fg ram-bar" cx="50" cy="50" r="40"></circle>
+              </svg>
+              <div class="gauge-value" id="ram-value">0%</div>
+            </div>
+            <div class="ram-details" id="ram-details">0.0 / 0.0 GB</div>
+          </div>
+        </div>
+
+        <!-- OS & ENVIRONMENT INFO -->
+        <div class="info-block">
+          <div class="info-row">
+            <span class="info-label">PLATFORM</span>
+            <span class="info-value" id="platform-value">LOADING...</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">UPTIME</span>
+            <span class="info-value" id="uptime-value">0h 0m</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">HOST IP</span>
+            <span class="info-value">127.0.0.1</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">PORT CONFIG</span>
+            <span class="info-value">3001 [LOCAL]</span>
+          </div>
+        </div>
+
+        <!-- LIVE GRAPH CONTAINER (CSS animated bar bars) -->
+        <div class="live-graph-box">
+          <span class="stat-label">CORE FREQUENCY METERS</span>
+          <div class="bar-graph" id="bar-graph">
+            <!-- Bars will be animated in style.css/js -->
+            <div class="graph-bar" style="height: 40%"></div>
+            <div class="graph-bar" style="height: 60%"></div>
+            <div class="graph-bar" style="height: 80%"></div>
+            <div class="graph-bar" style="height: 50%"></div>
+            <div class="graph-bar" style="height: 70%"></div>
+            <div class="graph-bar" style="height: 90%"></div>
+            <div class="graph-bar" style="height: 35%"></div>
+            <div class="graph-bar" style="height: 45%"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CENTER PANEL: ARC REACTOR & SPEECH -->
+      <section class="hud-panel center-panel">
+        <div class="reactor-wrapper">
+          
+          <!-- Outer circular elements -->
+          <div class="outer-decor-ring"></div>
+          
+          <!-- Reactor Outer Dial -->
+          <div class="dial-container">
+            <div class="tech-dial dial-clockwise"></div>
+            <div class="tech-dial dial-counter-clockwise"></div>
+          </div>
+
+          <!-- Main Arc Reactor -->
+          <div id="arc-reactor" class="reactor-idle">
+            <!-- Glowing background -->
+            <div class="reactor-glow"></div>
+            
+            <!-- Interceptor Ring with notches -->
+            <div class="ring outer-ring"></div>
+            <div class="ring middle-ring"></div>
+            <div class="ring inner-ring"></div>
+            
+            <!-- Arc Reactor Triangular Segments -->
+            <div class="triangles-container">
+              <div class="triangle t1"></div>
+              <div class="triangle t2"></div>
+              <div class="triangle t3"></div>
+              <div class="triangle t4"></div>
+              <div class="triangle t5"></div>
+              <div class="triangle t6"></div>
+              <div class="triangle t7"></div>
+              <div class="triangle t8"></div>
+              <div class="triangle t9"></div>
+              <div class="triangle t10"></div>
+            </div>
+            
+            <!-- Core Core Center -->
+            <div class="core-center">
+              <div class="core-inner-glow"></div>
+              <div class="core-label">JARVIS</div>
+            </div>
+          </div>
+
+          <!-- Click to Speak Action Button -->
+          <button id="speech-btn" class="glow-button">
+            <span class="btn-icon">🎙️</span>
+            <span class="btn-text">INICIAR COMANDO</span>
+          </button>
+
+          <!-- Real-Time Waveform Visualizer -->
+          <div class="visualizer-container">
+            <canvas id="waveform-canvas"></canvas>
+            <div class="voice-status" id="voice-status">NÚCLEO EN ESPERA</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT PANEL: ENVIRONMENTAL SUITE -->
+      <section class="hud-panel right-panel">
+        <h2 class="panel-title">ENVIRONMENTAL SUITE</h2>
+
+        <!-- DATE & TIME -->
+        <div class="time-box">
+          <div class="digital-time" id="clock-time">00:00:00</div>
+          <div class="digital-date" id="clock-date">DOMINGO, 02 DE AGOSTO</div>
+        </div>
+
+        <!-- SIMULATED WEATHER DATA -->
+        <div class="weather-box">
+          <span class="stat-label">WEATHER STATION</span>
+          <div class="weather-main">
+            <span class="temp" id="weather-temp">30°C</span>
+            <span class="desc" id="weather-desc">DESPEJADO / BUEN TIEMPO</span>
+          </div>
+          <div class="weather-details">
+            <div class="w-row">
+              <span>HUMEDAD</span>
+              <span id="weather-humidity">44%</span>
+            </div>
+            <div class="w-row">
+              <span>VIENTO</span>
+              <span id="weather-wind">8 km/h (E)</span>
+            </div>
+            <div class="w-row">
+              <span>PRESIÓN</span>
+              <span id="weather-pressure">1015 hPa</span>
+            </div>
+            <div class="w-row">
+              <span>FASES LUNARES</span>
+              <span>MENGUANTE</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- NETWORK TRAFFIC -->
+        <div class="network-box">
+          <span class="stat-label">NETWORK TRAFFIC</span>
+          <div class="net-grid">
+            <div class="net-stat">
+              <span class="net-arrow">▲</span>
+              <span class="net-value" id="net-up">0.0 MB/s</span>
+              <span class="net-lbl">TOTAL UP</span>
+            </div>
+            <div class="net-stat">
+              <span class="net-arrow">▼</span>
+              <span class="net-value" id="net-down">0.0 MB/s</span>
+              <span class="net-lbl">TOTAL DOWN</span>
+            </div>
+          </div>
+          <div class="net-graph-lines">
+            <div class="line-fill up-fill"></div>
+            <div class="line-fill down-fill"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FOOTER TERMINAL CONSOLE -->
+    <footer class="hud-footer">
+      <div class="console-wrapper">
+        <div class="console-header">
+          <span>OPERATIONAL TERMINAL FEED</span>
+          <span class="feed-indicator">LIVE LINK</span>
+        </div>
+        <!-- Logs Box -->
+        <div class="console-logs" id="console-logs">
+          <div class="log-entry system">[SISTEMA] Iniciando núcleo de J.A.R.V.I.S...</div>
+          <div class="log-entry system">[SISTEMA] Cargando red neuronal artificial (Gemini-1.5-Flash)...</div>
+          <div class="log-entry system">[SISTEMA] Enlazando sintetizadores de voz (ElevenLabs)...</div>
+          <div class="log-entry success">[SISTEMA] Conexión establecida. Listo para recibir comandos, señor.</div>
+        </div>
+        <!-- Command Input -->
+        <form class="console-input-form" id="console-form">
+          <span class="prompt-arrow">&gt;</span>
+          <input type="text" id="command-input" placeholder="Introduzca un comando por escrito o haga clic en el Reactor..." autocomplete="off">
+          <button type="submit" class="console-submit-btn">ENVIAR</button>
+        </form>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Client JavaScript -->
+  <script src="app.js"></script>
+</body>
+</html>
