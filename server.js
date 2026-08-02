@@ -143,6 +143,10 @@ function executeSystemAction(action) {
     case 'mute':
       exec('powershell -Command "(New-Object -ComObject WScript.Shell).SendKeys([char]173)"');
       break;
+    case 'stop':
+      console.log('Stop action triggered. Moving JARVIS window back to Jarvis desktop...');
+      exec('powershell -ExecutionPolicy Bypass -File move-to-jarvis-desktop.ps1');
+      break;
     default:
       console.warn(`Action type ${type} is not supported.`);
   }
@@ -278,20 +282,20 @@ Example JSON response:
   }
 });
 
-// Endpoint: Toggle Fullscreen via PowerShell (for background wake)
 app.post('/api/double-clap', (req, res) => {
-  console.log('Double clap event received from client. Toggling fullscreen...');
-  const psScript = `
-    $wshell = New-Object -ComObject WScript.Shell;
-    if ($wshell.AppActivate('J.A.R.V.I.S. - Stark Industries OS')) {
-      Start-Sleep -m 50
-      $wshell.SendKeys('{F11}')
-    }
-  `;
-  exec(`powershell -Command "${psScript.replace(/\n/g, ' ')}"`, (err) => {
+  console.log('Double clap event received from client. Moving window to current desktop and toggling fullscreen...');
+  exec('powershell -ExecutionPolicy Bypass -File move-to-current-desktop.ps1', (err) => {
     if (err) {
-      console.error('Failed to toggle fullscreen via PowerShell:', err);
+      console.error('Failed to move window to current desktop:', err);
     }
+    const psScript = `
+      $wshell = New-Object -ComObject WScript.Shell;
+      if ($wshell.AppActivate('J.A.R.V.I.S. - Stark Industries OS')) {
+        Start-Sleep -m 100
+        $wshell.SendKeys('{F11}')
+      }
+    `;
+    exec(`powershell -Command "${psScript.replace(/\n/g, ' ')}"`);
   });
   res.json({ success: true });
 });

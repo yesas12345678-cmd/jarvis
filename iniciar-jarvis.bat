@@ -18,5 +18,7 @@ if %errorlevel% neq 0 (
 :: Try to launch Chrome in App Mode (borderless window)
 echo [SISTEMA] Lanzando interfaz en modo aplicación...
 start "" "chrome.exe" --app=http://localhost:3001 --autoplay-policy=no-user-gesture-required --use-fake-ui-for-media-stream
+timeout /t 3 > nul
+powershell -ExecutionPolicy Bypass -File move-to-jarvis-desktop.ps1
 
 exit
