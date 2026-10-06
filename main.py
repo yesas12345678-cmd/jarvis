@@ -69,6 +69,7 @@ def main():
                 tts.speak("¿En qué puedo asistirle, Señor?")
                 continue
 
+            tts.speak_processing()
             print(f"\n[JARVIS] Ejecutando orden: \"{command}\"")
 
             response_text = agent.process_command(command)

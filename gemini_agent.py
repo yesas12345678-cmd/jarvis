@@ -150,8 +150,8 @@ class GeminiAgent:
             tools=[tools],
             system_instruction=SYSTEM_INSTRUCTION,
             generation_config=genai.GenerationConfig(
-                temperature=0.4,
-                max_output_tokens=256,
+                temperature=0.1,
+                max_output_tokens=64,
             ),
         )
 
