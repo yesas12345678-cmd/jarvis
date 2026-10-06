@@ -1,0 +1,28 @@
+# ============================================================
+# J.A.R.V.I.S. Python - Dependencias
+# ============================================================
+
+# --- IA / LLM ---
+google-generativeai>=0.8.3
+
+# --- Audio: Microfono y Captura ---
+pyaudio>=0.2.14
+# webrtcvad-wheels incluye binarios precompilados para Windows
+webrtcvad-wheels>=2.0.14
+
+# --- Wake Word Detection (local, sin API key) ---
+openwakeword>=0.6.0
+
+# --- Speech-to-Text ---
+SpeechRecognition>=3.10.0
+
+# --- Text-to-Speech (voces Microsoft, alta calidad) ---
+edge-tts>=6.1.9
+pygame>=2.5.2
+
+# --- Control del Sistema ---
+pyautogui>=0.9.54
+
+# --- Utilidades ---
+python-dotenv>=1.0.0
+numpy>=1.24.0
