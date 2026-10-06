@@ -27,11 +27,11 @@ Eres J.A.R.V.I.S. (Just A Rather Very Intelligent System), el asistente de IA pe
 REGLAS ABSOLUTAS:
 - Siempre dirígete al usuario como "Señor".
 - Responde SIEMPRE en español.
-- Respuestas MUY cortas y concisas: máximo 1 o 2 oraciones breves.
+- Respuestas ULTRA CORTAS y rápidas: máximo 1 oración concisa.
 - Tono formal, educado, elegante y extremadamente eficiente.
-- NUNCA uses caracteres de formato Markdown (sin asteriscos, sin listas, sin emojis) ya que la respuesta se leerá por voz Text-To-Speech.
-- Si el usuario te pide abrir una app, gestionar un archivo, ejecutar un comando o controlar la interfaz, USA las herramientas disponibles.
-- Confirma la acción brevemente una vez ejecutada.
+- NUNCA uses formato Markdown (sin asteriscos, sin listas, sin emojis) ya que la respuesta se leerá por voz Text-To-Speech.
+- El usuario puede pedirte VARIAS tareas o acciones simultáneas en una sola orden (ej. 'abre spotify y abre la calculadora'). Puedes y DEBES invocar todas las herramientas necesarias a la vez.
+- Confirma las acciones de forma global y muy breve.
 """
 
 TOOL_DECLARATIONS = [
@@ -156,36 +156,39 @@ class GeminiAgent:
         )
 
     def process_command(self, command_text: str) -> str | None:
-        """Envia el comando a Gemini y procesa Function Calling de forma recursiva."""
+        """Envia el comando a Gemini y procesa todas las Function Calling (simultaneas o secuenciales)."""
         try:
             response = self.chat.send_message(command_text)
 
             while True:
-                fn_call = None
-                for part in response.parts:
-                    fc = getattr(part, "function_call", None)
-                    if fc and fc.name:
-                        fn_call = fc
-                        break
+                fn_calls = [
+                    part.function_call
+                    for part in response.parts
+                    if getattr(part, "function_call", None) and part.function_call.name
+                ]
 
-                if fn_call is None:
+                if not fn_calls:
                     return response.text.strip() if response.text else None
 
-                func_name = fn_call.name
-                func_args = dict(fn_call.args) if fn_call.args else {}
-                print(f"[GEMINI] Funcion solicitada: {func_name}({func_args})")
+                fn_parts = []
+                for fc in fn_calls:
+                    func_name = fc.name
+                    func_args = dict(fc.args) if fc.args else {}
+                    print(f"[GEMINI] Ejecutando tarea: {func_name}({func_args})")
 
-                result = self._dispatch(func_name, func_args)
-                print(f"[GEMINI] Resultado: {str(result)[:100]}")
+                    result = self._dispatch(func_name, func_args)
+                    print(f"[GEMINI] Resultado de {func_name}: {str(result)[:80]}")
 
-                response = self.chat.send_message(
-                    genai.protos.Part(
-                        function_response=genai.protos.FunctionResponse(
-                            name=func_name,
-                            response={"result": str(result)},
+                    fn_parts.append(
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=func_name,
+                                response={"result": str(result)},
+                            )
                         )
                     )
-                )
+
+                response = self.chat.send_message(fn_parts)
 
         except Exception as e:
             print(f"[GEMINI] Error al procesar comando: {e}")

@@ -29,7 +29,7 @@ WW_THRESHOLD = 0.20        # Umbral sensible para openwakeword
 VAD_CHUNK_SAMPLES = 480    # 30ms a 16kHz
 VAD_MODE = 1               # Nivel balanceado
 
-SILENCE_TIMEOUT = 1.0      # 1 segundo de silencio corta la grabacion
+SILENCE_TIMEOUT = 0.65     # 0.65 segundos de silencio para responder casi al instante
 MAX_RECORD_SECONDS = 7.0   # Maximo 7 segundos por frase
 
 

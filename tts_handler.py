@@ -31,17 +31,19 @@ except ImportError:
     WINSOUND_AVAILABLE = False
 
 DEFAULT_VOICE = os.environ.get("JARVIS_VOICE", "es-ES-AlvaroNeural")
+DEFAULT_RATE = os.environ.get("JARVIS_RATE", "+25%")
 
 
 class TTSHandler:
     """
     Gestor de Text-to-Speech para JARVIS.
-    Genera audio con edge-tts y lo reproduce directamente en memoria con sounddevice.
+    Genera audio con edge-tts a velocidad acelerada y lo reproduce directamente en memoria con sounddevice.
     """
 
-    def __init__(self, voice: str = DEFAULT_VOICE):
+    def __init__(self, voice: str = DEFAULT_VOICE, rate: str = DEFAULT_RATE):
         self.voice = voice
-        print(f"[TTS] Voz configurada: {self.voice}")
+        self.rate = rate
+        print(f"[TTS] Voz configurada: {self.voice} (velocidad: {self.rate})")
 
     def speak(self, text: str):
         """Convierte texto a voz y lo reproduce de forma bloqueante."""
@@ -69,8 +71,8 @@ class TTSHandler:
             print(f"[TTS] Error en sintesis de voz: {e}")
 
     async def _generate_audio(self, text: str) -> bytes:
-        """Genera audio MP3 con edge-tts de forma asincrona."""
-        communicate = edge_tts.Communicate(text, self.voice)
+        """Genera audio MP3 con edge-tts de forma asincrona a mayor velocidad."""
+        communicate = edge_tts.Communicate(text, self.voice, rate=self.rate)
         chunks = []
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":

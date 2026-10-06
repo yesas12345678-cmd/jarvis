@@ -1,4 +1,4 @@
-﻿"""
+"""
 system_tools.py - Herramientas del sistema para J.A.R.V.I.S.
 Implementa las funciones fisicas que Gemini puede invocar mediante Function Calling.
 """
@@ -76,6 +76,10 @@ APP_COMMANDS = {
     # Gaming
     "steam": "steam",
     "epic games": "com.epicgames.launcher://",
+    "sk launcher": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
+    "sklauncher": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
+    "tlauncher": r"C:\Users\yesas\AppData\Roaming\.minecraft\TLauncher.exe",
+    "minecraft": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
 }
 
 
@@ -95,24 +99,35 @@ class SystemTools:
     # 1. ABRIR APLICACION
     # --------------------------------------------------------
     def abrir_aplicacion(self, nombre_app: str) -> str:
-        """Abre una aplicacion por nombre. Intenta mapeado predefinido y luego ejecucion directa."""
+        """Abre una aplicacion por nombre. Intenta mapeado predefinido y luego busqueda difusa."""
         try:
             key = nombre_app.lower().strip()
             cmd = APP_COMMANDS.get(key)
 
             if cmd:
                 if cmd.endswith(":") or "://" in cmd:
-                    # Es un protocolo de URI (ms-settings:, com.epic...)
+                    subprocess.Popen(["powershell", "-Command", f"Start-Process '{cmd}'"], shell=False)
+                elif "\\" in cmd:
                     subprocess.Popen(["powershell", "-Command", f"Start-Process '{cmd}'"], shell=False)
                 else:
                     subprocess.Popen(cmd, shell=True)
                 print(f"[TOOLS] Abierta: {nombre_app} -> {cmd}")
                 return f"Aplicacion '{nombre_app}' iniciada correctamente."
             else:
-                # Fallback: usar PowerShell para buscar en PATH y Start Menu
+                # Fallback: utilizar script de busqueda difusa en el sistema
+                ps1 = os.path.join(os.path.dirname(__file__), "open-app.ps1")
+                if os.path.exists(ps1):
+                    res = subprocess.run(
+                        ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps1, "-AppName", nombre_app],
+                        capture_output=True, text=True, timeout=12
+                    )
+                    if res.returncode == 0:
+                        return f"Iniciando '{nombre_app}'..."
+
+                # Ultimo recurso: Start-Process nativo
                 result = subprocess.run(
                     ["powershell", "-Command", f"Start-Process '{nombre_app}'"],
-                    capture_output=True, text=True, timeout=10
+                    capture_output=True, text=True, timeout=8
                 )
                 if result.returncode == 0:
                     return f"Iniciando '{nombre_app}'..."
