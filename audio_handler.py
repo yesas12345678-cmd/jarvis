@@ -52,9 +52,9 @@ WW_THRESHOLD = 0.20        # Calibrado para pronunciacion en espanol de 'Hey Jar
 VAD_CHUNK_SAMPLES = 480    # 30ms a 16kHz (requerido por webrtcvad)
 VAD_MODE = 1               # Modo 1: balanceado para captura de voz de escritorio
 
-SILENCE_TIMEOUT = 1.8      # Segundos de silencio para finalizar grabacion
-MAX_RECORD_SECONDS = 25    # Duracion maxima de un comando
-PRE_SPEECH_TIMEOUT = 7.0   # Tiempo maximo de espera antes de que empiece a hablar
+SILENCE_TIMEOUT = 1.0      # 1 segundo de silencio para cerrar grabacion
+MAX_RECORD_SECONDS = 7.0   # Maximo 7 segundos por orden
+PRE_SPEECH_TIMEOUT = 4.0   # 4 segundos para empezar a hablar tras 'Hey Jarvis'
 
 
 class AudioHandler:
@@ -172,7 +172,7 @@ class AudioHandler:
         silence_limit = int(SILENCE_TIMEOUT * RATE / VAD_CHUNK_SAMPLES)
         start = time.time()
         stop_event = threading.Event()
-        speech_threshold_rms = max(self.noise_floor * 1.8, 35.0)
+        speech_threshold_rms = max(self.noise_floor * 2.0, 45.0)
 
         def callback(indata, frame_count, time_info, status):
             nonlocal speech_detected, silence_frames
@@ -183,21 +183,20 @@ class AudioHandler:
             raw = chunk.tobytes()
             frames.append(raw)
 
-            # Deteccion hibrida: VAD + Energia adaptativa
-            is_speech = False
+            rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+
+            vad_says_yes = False
             if self.vad and len(raw) == VAD_CHUNK_SAMPLES * SAMPLE_WIDTH:
                 try:
-                    is_speech = self.vad.is_speech(raw, RATE)
+                    vad_says_yes = self.vad.is_speech(raw, RATE)
                 except Exception:
                     pass
 
-            if not is_speech:
-                rms = np.sqrt(np.mean(chunk.astype(np.float32) ** 2))
-                is_speech = (rms >= speech_threshold_rms)
+            is_speech = vad_says_yes and (rms >= speech_threshold_rms * 0.7)
 
             if is_speech:
                 if not speech_detected:
-                    print("[AUDIO] Voz detectada... grabando.")
+                    print("[AUDIO] Voz detectada... grabando orden.")
                 speech_detected = True
                 silence_frames = 0
             elif speech_detected:

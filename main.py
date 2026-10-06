@@ -1,4 +1,4 @@
-﻿"""
+"""
 main.py - Bucle principal de J.A.R.V.I.S.
 Orquesta el pipeline completo: wake word -> grabacion -> STT -> Gemini -> TTS.
 """
@@ -89,21 +89,24 @@ def main():
             tts.speak_activation()
 
             # PASO 3: Grabar comando con VAD
-            print("[JARVIS] Escuchando comando...")
+            print("\n[JARVIS] >>> ESCUCHANDO SU ORDEN... (hable ahora) <<<")
             audio_bytes = audio.record_command()
 
             if audio_bytes is None:
-                print("[JARVIS] Sin voz detectada. Volviendo a escucha pasiva.\n")
+                print("[JARVIS] Sin voz detectada. Volviendo a modo alerta.\n")
                 continue
 
             # PASO 4: Transcripcion de voz a texto (STT)
+            print("[JARVIS] Transcribiendo audio...")
             command_text = audio.transcribe(audio_bytes)
 
             if not command_text:
-                tts.speak("No he podido entender, Senior. Por favor, repita el comando.")
+                tts.speak("No he podido entender la orden, Señor.")
+                print("[JARVIS] Volviendo a escucha pasiva...\n")
                 continue
 
-            print(f"[JARVIS] Comando recibido: '{command_text}'")
+            print(f"[JARVIS] Orden recibida: '{command_text}'")
+            print("[JARVIS] Procesando con Gemini...")
 
             # PASO 5: Procesar con Gemini (incluye Function Calling automatico)
             response_text = agent.process_command(command_text)
@@ -114,7 +117,7 @@ def main():
             else:
                 print("[JARVIS] Sin respuesta del agente.")
 
-            print("[JARVIS] Volviendo a escucha pasiva...\n")
+            print("\n[JARVIS] Listo. Esperando 'Hey Jarvis'...\n")
 
         except KeyboardInterrupt:
             shutdown()
