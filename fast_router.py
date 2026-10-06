@@ -33,7 +33,7 @@ class FastRouter:
             now = datetime.datetime.now()
             return f"Son las {now.strftime('%H:%M')}, Señor."
 
-        if re.search(r"^(?:qué día es|dime el día|qué fecha es|que dia es|que fecha es)$", text):
+        if re.search(r"^(?:qué día es|dime el día|qué fecha es|que dia es|que fecha es|qué día es hoy|que dia es hoy|qué fecha es hoy|que fecha es hoy)(?:\s+hoy)?$", text):
             now = datetime.datetime.now()
             dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
             meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
@@ -41,6 +41,15 @@ class FastRouter:
             dia_num = now.day
             mes = meses[now.month - 1]
             return f"Hoy es {dia_semana} {dia_num} de {mes}, Señor."
+
+        if any(text.startswith(g) for g in ["buenos días", "buenos dias"]):
+            return "Buenos días, Señor. Todos los sistemas operativos al máximo rendimiento."
+
+        if any(text.startswith(g) for g in ["buenas tardes"]):
+            return "Buenas tardes, Señor. A su disposición."
+
+        if any(text.startswith(g) for g in ["buenas noches"]):
+            return "Buenas noches, Señor."
 
         # -----------------------------------------------------------------
         # 2. ABRIR APLICACIONES (Instantaneo)

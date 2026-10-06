@@ -157,7 +157,7 @@ class AudioHandler:
         print(f"\n[AUDIO] Frase captada: \"{text}\"")
 
         # Comprobar si menciono a Jarvis (o variantes foneticas habituales)
-        keywords = ["jarvis", "yarvis", "jarvi", "charvis", "harvis"]
+        keywords = ["jarvis", "yarvis", "jarvi", "charvis", "harvis", "alvis", "arvis", "elvis", "yervis", "llarvis"]
         for kw in keywords:
             if kw in lower:
                 # Separar el comando si vino todo en una sola frase
