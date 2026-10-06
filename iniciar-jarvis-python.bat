@@ -4,5 +4,5 @@ cd /d "c:\PROYECTOS\jarvis"
 echo ===================================================
 echo   INICIANDO NUCLEO DE J.A.R.V.I.S. (PYTHON)
 echo ===================================================
-python main.py
+python -u main.py
 pause
