@@ -87,7 +87,7 @@ class AudioHandler:
         def callback(indata, frame_count, time_info, status):
             nonlocal speech_started, silence_frames
             if stop_event.is_set():
-                raise sd.CallbackStop()
+                return
 
             chunk = indata[:, 0].astype(np.int16)
             raw = chunk.tobytes()
@@ -118,10 +118,10 @@ class AudioHandler:
             # Detener cuando termine de hablar o se agote el tiempo
             if speech_started and silence_frames >= silence_limit:
                 stop_event.set()
-                raise sd.CallbackStop()
+                return
             if speech_started and elapsed >= MAX_RECORD_SECONDS:
                 stop_event.set()
-                raise sd.CallbackStop()
+                return
 
         try:
             with sd.InputStream(
@@ -131,12 +131,10 @@ class AudioHandler:
                 blocksize=VAD_CHUNK_SAMPLES,
                 callback=callback,
             ):
-                # Esperar hasta que se detecte voz y termine la frase
                 while not stop_event.is_set():
-                    time.sleep(0.05)
+                    time.sleep(0.04)
         except Exception as e:
-            if "CallbackStop" not in str(type(e).__name__):
-                print(f"[AUDIO] Error en stream: {e}")
+            print(f"[AUDIO] Stream: {e}")
 
         if not speech_started or not frames:
             return None, None
@@ -177,7 +175,7 @@ class AudioHandler:
         def callback(indata, frame_count, time_info, status):
             nonlocal speech_started, silence_frames
             if stop_event.is_set():
-                raise sd.CallbackStop()
+                return
 
             chunk = indata[:, 0].astype(np.int16)
             raw = chunk.tobytes()
@@ -203,10 +201,10 @@ class AudioHandler:
             elapsed = time.time() - start_time
             if speech_started and silence_frames >= silence_limit:
                 stop_event.set()
-                raise sd.CallbackStop()
+                return
             if elapsed >= 8.0:
                 stop_event.set()
-                raise sd.CallbackStop()
+                return
 
         try:
             with sd.InputStream(
