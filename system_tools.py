@@ -172,20 +172,38 @@ class SystemTools:
     # --------------------------------------------------------
     # 2. CAPTURA Y VISION DE PANTALLA
     # --------------------------------------------------------
+    def _attach_interactive_desktop(self):
+        """Conecta el hilo actual a la estacion de ventanas interactiva del usuario (winsta0/default)."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwinsta = user32.OpenWindowStationW("winsta0", False, 0xF037F)
+            if hwinsta:
+                user32.SetProcessWindowStation(hwinsta)
+                hdesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
+                if hdesk:
+                    user32.SetThreadDesktop(hdesk)
+        except Exception:
+            pass
+
     def capturar_pantalla(self):
         """Toma una captura de pantalla del escritorio activo."""
+        self._attach_interactive_desktop()
         img = None
         if PIL_AVAILABLE:
             try:
                 img = ImageGrab.grab(all_screens=True)
             except Exception:
-                pass
+                try:
+                    img = ImageGrab.grab()
+                except Exception as e:
+                    print(f"[TOOLS] ImageGrab error: {e}")
 
         if img is None and PYAUTOGUI_AVAILABLE:
             try:
                 img = pyautogui.screenshot()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[TOOLS] pyautogui screenshot error: {e}")
 
         if img is not None:
             try:
@@ -204,6 +222,18 @@ class SystemTools:
 
         try:
             import google.generativeai as genai
+            import socket
+
+            _orig = socket.getaddrinfo
+            def _ipv4(*args, **kwargs):
+                r = _orig(*args, **kwargs)
+                return [x for x in r if x[0] == socket.AF_INET] or r
+            socket.getaddrinfo = _ipv4
+
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            if api_key:
+                genai.configure(api_key=api_key)
+
             w, h = img.size
             # Redimensionar para transferencia ultra-rapida a la API
             img_small = img.resize((1024, int(h * 1024 / w)))

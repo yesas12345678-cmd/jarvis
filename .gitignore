@@ -3,3 +3,4 @@ node_modules/
 __pycache__/
 *.pyc
 pantalla.png
+pantalla_actual.jpg
