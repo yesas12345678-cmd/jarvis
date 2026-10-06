@@ -169,8 +169,8 @@ class AudioHandler:
 
         return None, None
 
-    def record_followup(self) -> str | None:
-        """Graba la orden si el usuario solo dijo 'Jarvis' y necesita darle la instruccion."""
+    def record_followup(self, wait_seconds: float = 6.0) -> str | None:
+        """Graba la orden directamente sin requerir decir 'Jarvis'. Finaliza tras wait_seconds de silencio."""
         frames = []
         speech_started = False
         silence_frames = 0
@@ -206,10 +206,13 @@ class AudioHandler:
                 silence_frames += 1
 
             elapsed = time.time() - start_time
+            if not speech_started and elapsed >= wait_seconds:
+                stop_event.set()
+                return
             if speech_started and silence_frames >= silence_limit:
                 stop_event.set()
                 return
-            if elapsed >= 8.0:
+            if elapsed >= (wait_seconds + MAX_RECORD_SECONDS):
                 stop_event.set()
                 return
 
@@ -221,7 +224,7 @@ class AudioHandler:
                 blocksize=VAD_CHUNK_SAMPLES,
                 callback=callback,
             ):
-                stop_event.wait(timeout=9.0)
+                stop_event.wait(timeout=wait_seconds + MAX_RECORD_SECONDS + 1.0)
         except Exception:
             pass
 

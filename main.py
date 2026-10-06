@@ -56,42 +56,74 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, shutdown)
 
+    def handle_command(cmd: str) -> bool:
+        """
+        Ejecuta la orden (via FastRouter o Gemini) y reproduce la voz.
+        Retorna True para mantener la conversacion activa, o False para cerrarla.
+        """
+        if not cmd or not cmd.strip():
+            return False
+
+        clean = cmd.strip()
+        lower = clean.lower()
+
+        # Palabras de cierre explícito
+        if any(w in lower for w in ["adiós", "adios", "hasta luego", "descansa", "nada más", "nada mas", "apágate", "cierra sesión"]):
+            tts.speak("A su disposición, Señor.")
+            return False
+
+        tts.speak_processing()
+        print(f"\n[JARVIS] Ejecutando: \"{clean}\"")
+
+        # 1. RUTA ULTRA-RAPIDA LOCAL (< 5ms local, 0ms latencia de red)
+        fast_resp = router.try_execute(clean)
+        if fast_resp:
+            print(f"[JARVIS][FAST-PATH] Accion resuelta de inmediato.")
+            tts.speak(fast_resp)
+            return True
+
+        # 2. INTELIGENCIA GEMINI (para vision, preguntas y logica compleja)
+        gemini_resp = agent.process_command(clean)
+        if gemini_resp:
+            tts.speak(gemini_resp)
+            return True
+        else:
+            print("[JARVIS] Sin respuesta del agente.")
+            return False
+
     while True:
         try:
             status, command = audio.listen_and_capture()
             if status is None:
                 continue
 
-            # Si solo dijo "Jarvis", emitir pitido y pedir la orden
+            # Si solo dijo "Jarvis" o "Oye Jarvis", dar acuse de recibo y esperar la orden
             if not command:
                 tts.speak_activation()
                 print("\n[JARVIS] >>> ¿Qué desea ordenar, Señor? (hable ahora) <<<")
-                command = audio.record_followup()
+                command = audio.record_followup(wait_seconds=5.0)
+                if not command:
+                    tts.speak("¿En qué puedo asistirle, Señor?")
+                    command = audio.record_followup(wait_seconds=6.0)
 
             if not command:
-                tts.speak("¿En qué puedo asistirle, Señor?")
                 continue
 
-            tts.speak_processing()
-            print(f"\n[JARVIS] Ejecutando orden: \"{command}\"")
+            # -------------------------------------------------------------
+            # BUCLE DE CONVERSACION CONTINUA:
+            # Mientras el usuario siga hablando, NO necesita volver a decir "Jarvis"
+            # -------------------------------------------------------------
+            current_cmd = command
+            while current_cmd:
+                should_continue = handle_command(current_cmd)
+                if not should_continue:
+                    break
 
-            # 1. RUTA ULTRA-RAPIDA LOCAL (0ms llamadas de red, ejecucion instantanea)
-            fast_response = router.try_execute(command)
-            if fast_response:
-                print(f"[JARVIS][FAST-PATH] Accion resuelta de inmediato.")
-                tts.speak(fast_response)
-                print("\n[JARVIS] Esperando nueva orden...\n")
-                continue
+                print("\n[JARVIS] [Conversacion Activa] Escuchando (hable sin decir Jarvis)...")
+                current_cmd = audio.record_followup(wait_seconds=6.0)
 
-            # 2. INTELIGENCIA GEMINI (para vision, preguntas y logica compleja)
-            response_text = agent.process_command(command)
+            print("\n[JARVIS] Modo reposo. Diga 'Jarvis' para una nueva orden.\n")
 
-            if response_text:
-                tts.speak(response_text)
-            else:
-                print("[JARVIS] Sin respuesta del agente.")
-
-            print("\n[JARVIS] Esperando nueva orden...\n")
 
         except KeyboardInterrupt:
             shutdown()
