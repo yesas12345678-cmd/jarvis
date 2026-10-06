@@ -46,7 +46,7 @@ DTYPE = "int16"
 SAMPLE_WIDTH = 2  # bytes por muestra int16
 
 WW_CHUNK_SAMPLES = 1280   # 80ms a 16kHz (requerido por openwakeword)
-WW_THRESHOLD = 0.5
+WW_THRESHOLD = 0.35
 
 VAD_CHUNK_SAMPLES = 480   # 30ms a 16kHz (requerido por webrtcvad)
 VAD_MODE = 3
@@ -103,13 +103,16 @@ class AudioHandler:
             nonlocal detected
             if detected:
                 return
-            audio_arr = indata[:, 0].astype(np.float32)
+            audio_arr = indata[:, 0].copy()
             if len(audio_arr) == WW_CHUNK_SAMPLES:
-                predictions = self.ww_model.predict(audio_arr)
-                for name, score in predictions.items():
-                    if score >= WW_THRESHOLD:
-                        print(f"[AUDIO] Wake word: '{name}' (score: {score:.2f})")
-                        detected = True
+                try:
+                    predictions = self.ww_model.predict(audio_arr)
+                    for name, score in predictions.items():
+                        if score >= WW_THRESHOLD:
+                            print(f"\n[AUDIO] ¡Wake word detectado! '{name}' (confianza: {score:.2f})")
+                            detected = True
+                except Exception as ex:
+                    print(f"[AUDIO] Error en predict: {ex}")
 
         try:
             with sd.InputStream(
