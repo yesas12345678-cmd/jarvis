@@ -1,4 +1,4 @@
-﻿"""
+"""
 audio_handler.py - Modulo de audio para J.A.R.V.I.S.
 Usa sounddevice (compatible Python 3.14+) en lugar de pyaudio.
 Wake word: openwakeword | VAD: webrtcvad | STT: SpeechRecognition
@@ -79,10 +79,10 @@ class AudioHandler:
         if not OWW_AVAILABLE:
             return None
         try:
-            print("[AUDIO] Cargando modelo de wake word (primera vez ~50MB de descarga)...")
-            model = OWWModel(inference_framework="onnx")
+            print("[AUDIO] Cargando modelo de wake word 'hey jarvis'...")
+            model = OWWModel(wakeword_models=["hey_jarvis_v0.1.onnx"], inference_framework="onnx")
             wakewords = list(model.models.keys())
-            print(f"[AUDIO] Wake words disponibles: {wakewords}")
+            print(f"[AUDIO] Wake words activos: {wakewords}")
             return model
         except Exception as e:
             print(f"[AUDIO] Error cargando wake word model: {e}")
