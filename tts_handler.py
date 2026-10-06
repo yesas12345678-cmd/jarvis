@@ -1,12 +1,14 @@
 ﻿"""
 tts_handler.py - Sintesis de voz para J.A.R.V.I.S.
-Usa edge-tts (voces Microsoft de alta calidad) con pygame para la reproduccion.
+Usa edge-tts para generar audio y PowerShell WMP para reproducirlo (sin compilacion).
+Compatible con Python 3.14+.
 """
 
 import asyncio
 import os
 import tempfile
 import time
+import subprocess
 
 try:
     import edge_tts
@@ -16,27 +18,31 @@ except ImportError:
     print("[TTS] edge-tts no disponible. Instala con: pip install edge-tts")
 
 try:
-    import pygame
-    pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-    PYGAME_AVAILABLE = True
-except ImportError:
-    PYGAME_AVAILABLE = False
-    print("[TTS] pygame no disponible. Sin reproduccion de audio.")
-
-try:
     import winsound
     WINSOUND_AVAILABLE = True
 except ImportError:
     WINSOUND_AVAILABLE = False
 
-# Voz por defecto: voz masculina espanola de Microsoft Edge
 DEFAULT_VOICE = os.environ.get("JARVIS_VOICE", "es-ES-AlvaroNeural")
+
+# Script PowerShell para reproducir MP3 con Windows Media Foundation
+_PS_PLAY_MP3 = """
+Add-Type -AssemblyName PresentationCore
+$player = New-Object System.Windows.Media.MediaPlayer
+$player.Open([System.Uri]::new((Resolve-Path "{path}").Path))
+$player.Play()
+$duration = 0
+while ($player.NaturalDuration.HasTimeSpan -eq $false) {{ Start-Sleep -Milliseconds 100; $duration += 100; if ($duration -ge 3000) {{ break }} }}
+if ($player.NaturalDuration.HasTimeSpan) {{ Start-Sleep -Seconds $player.NaturalDuration.TimeSpan.TotalSeconds }}
+else {{ Start-Sleep -Seconds 5 }}
+$player.Close()
+"""
 
 
 class TTSHandler:
     """
     Gestor de Text-to-Speech para JARVIS.
-    Genera audio con edge-tts y lo reproduce con pygame.
+    Genera audio con edge-tts y lo reproduce con Windows Media Foundation.
     """
 
     def __init__(self, voice: str = DEFAULT_VOICE):
@@ -44,21 +50,17 @@ class TTSHandler:
         print(f"[TTS] Voz configurada: {self.voice}")
 
     def speak(self, text: str):
-        """
-        Convierte texto a voz y lo reproduce de forma bloqueante.
-        Intenta edge-tts; si falla, imprime el texto como fallback.
-        """
+        """Convierte texto a voz y lo reproduce de forma bloqueante."""
         if not text or not text.strip():
             return
 
         print(f"[JARVIS] -> {text}")
 
-        if not EDGE_TTS_AVAILABLE or not PYGAME_AVAILABLE:
-            print("[TTS] Reproduccion de audio no disponible. Respuesta mostrada en consola.")
+        if not EDGE_TTS_AVAILABLE:
+            print("[TTS] edge-tts no disponible. Respuesta solo en consola.")
             return
 
         try:
-            # Usar un event loop nuevo para la llamada asincrona de edge-tts
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -82,22 +84,22 @@ class TTSHandler:
         return b"".join(chunks)
 
     def _play_mp3_bytes(self, audio_bytes: bytes):
-        """Guarda los bytes como archivo temporal y los reproduce con pygame."""
+        """Guarda bytes de MP3 en archivo temporal y lo reproduce con PowerShell + WMF."""
         tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
-            pygame.mixer.music.load(tmp_path)
-            pygame.mixer.music.play()
+            ps_script = _PS_PLAY_MP3.format(path=tmp_path.replace("\\", "\\\\"))
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                timeout=60,
+                capture_output=True,
+            )
 
-            # Esperar a que termine la reproduccion
-            while pygame.mixer.music.get_busy():
-                pygame.time.wait(50)
-
-            pygame.mixer.music.unload()
-
+        except subprocess.TimeoutExpired:
+            print("[TTS] Timeout reproduciendo audio.")
         except Exception as e:
             print(f"[TTS] Error reproduciendo audio: {e}")
         finally:
@@ -108,10 +110,7 @@ class TTSHandler:
                     pass
 
     def speak_activation(self):
-        """
-        Reproduce un sonido de activacion (doble beep) cuando se detecta el wake word.
-        Usa winsound en Windows para mayor velocidad.
-        """
+        """Reproduce un doble beep de activacion cuando se detecta el wake word."""
         if WINSOUND_AVAILABLE:
             try:
                 winsound.Beep(880, 120)
@@ -120,13 +119,8 @@ class TTSHandler:
                 return
             except Exception:
                 pass
-        # Fallback visual
         print("[JARVIS] *BEEP BEEP* - Escuchando...")
 
     def close(self):
-        """Libera recursos de audio."""
-        try:
-            if PYGAME_AVAILABLE:
-                pygame.mixer.quit()
-        except Exception:
-            pass
+        """Libera recursos."""
+        pass

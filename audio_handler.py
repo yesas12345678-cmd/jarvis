@@ -1,24 +1,27 @@
 ﻿"""
 audio_handler.py - Modulo de audio para J.A.R.V.I.S.
-Gestiona: deteccion de wake word (openwakeword), grabacion con VAD (webrtcvad) y STT.
+Usa sounddevice (compatible Python 3.14+) en lugar de pyaudio.
+Wake word: openwakeword | VAD: webrtcvad | STT: SpeechRecognition
 """
 
 import time
 import numpy as np
+import threading
+import queue
 
 try:
-    import pyaudio
-    PYAUDIO_AVAILABLE = True
+    import sounddevice as sd
+    SD_AVAILABLE = True
 except ImportError:
-    PYAUDIO_AVAILABLE = False
-    print("[AUDIO] pyaudio no disponible.")
+    SD_AVAILABLE = False
+    print("[AUDIO] sounddevice no disponible. Instala: pip install sounddevice")
 
 try:
     import webrtcvad
     WEBRTCVAD_AVAILABLE = True
 except ImportError:
     WEBRTCVAD_AVAILABLE = False
-    print("[AUDIO] webrtcvad no disponible. La deteccion de silencio sera basica.")
+    print("[AUDIO] webrtcvad no disponible. Se usara deteccion por energia.")
 
 try:
     import speech_recognition as sr
@@ -37,198 +40,176 @@ except ImportError:
 # ---------------------------------------------------------------
 # Constantes de audio
 # ---------------------------------------------------------------
-RATE = 16000          # Sample rate requerido por openwakeword y webrtcvad
+RATE = 16000
 CHANNELS = 1
-FORMAT_INT = None     # Se asigna dinamicamente con pyaudio
-SAMPLE_WIDTH = 2      # bytes por muestra (int16)
+DTYPE = "int16"
+SAMPLE_WIDTH = 2  # bytes por muestra int16
 
-WW_CHUNK = 1280       # 80ms a 16kHz (requerido por openwakeword)
-WW_THRESHOLD = 0.5    # Score minimo para activar wake word
+WW_CHUNK_SAMPLES = 1280   # 80ms a 16kHz (requerido por openwakeword)
+WW_THRESHOLD = 0.5
 
-VAD_CHUNK = 480       # 30ms a 16kHz (requerido por webrtcvad)
-VAD_MODE = 3          # Agresividad maxima (0-3)
+VAD_CHUNK_SAMPLES = 480   # 30ms a 16kHz (requerido por webrtcvad)
+VAD_MODE = 3
 
-SILENCE_TIMEOUT = 1.5       # Segundos de silencio para detener grabacion
-MAX_RECORD_SECONDS = 30     # Duracion maxima de un comando
-PRE_SPEECH_TIMEOUT = 5.0    # Espera maxima antes de que empiece a hablar
+SILENCE_TIMEOUT = 1.5
+MAX_RECORD_SECONDS = 30
+PRE_SPEECH_TIMEOUT = 5.0
 
 
 class AudioHandler:
-    """Gestor completo del pipeline de audio de JARVIS."""
+    """Gestor de audio de JARVIS usando sounddevice."""
 
     def __init__(self):
-        global FORMAT_INT
+        if not SD_AVAILABLE:
+            raise RuntimeError("sounddevice es necesario. Instala: pip install sounddevice")
 
-        if not PYAUDIO_AVAILABLE:
-            print("[AUDIO][ERROR] pyaudio es necesario. Instala con: pip install pyaudio")
-            self.pa = None
-            return
-
-        self.pa = pyaudio.PyAudio()
-        FORMAT_INT = pyaudio.paInt16
-
-        # VAD
         if WEBRTCVAD_AVAILABLE:
             self.vad = webrtcvad.Vad(VAD_MODE)
         else:
             self.vad = None
 
-        # Speech Recognition
         if SR_AVAILABLE:
             self.recognizer = sr.Recognizer()
         else:
             self.recognizer = None
 
-        # Wake Word Model
         self.ww_model = self._load_wake_word_model()
 
     def _load_wake_word_model(self):
-        """Carga el modelo de wake word con manejo de errores."""
         if not OWW_AVAILABLE:
             return None
         try:
-            print("[AUDIO] Cargando modelo de wake word (primera vez descarga ~50MB)...")
+            print("[AUDIO] Cargando modelo de wake word (primera vez ~50MB de descarga)...")
             model = OWWModel(inference_framework="onnx")
             wakewords = list(model.models.keys())
             print(f"[AUDIO] Wake words disponibles: {wakewords}")
             return model
         except Exception as e:
-            print(f"[AUDIO] Error al cargar wake word model: {e}")
+            print(f"[AUDIO] Error cargando wake word model: {e}")
             return None
 
     # --------------------------------------------------------
     # 1. DETECCION DE WAKE WORD
     # --------------------------------------------------------
     def listen_for_wake_word(self) -> bool:
-        """
-        Escucha pasivamente hasta detectar el wake word ('hey jarvis').
-        Fallback: espera que el usuario presione Enter.
-        Retorna True cuando se detecta activacion.
-        """
-        if self.ww_model is None or self.pa is None:
-            input("\n[JARVIS] (Modo texto) Presiona Enter para activar JARVIS: ")
+        """Escucha pasivamente hasta detectar el wake word. Fallback: Enter."""
+        if self.ww_model is None:
+            input("\n[JARVIS] Presiona Enter para activar (wake word no disponible): ")
             return True
 
-        stream = self.pa.open(
-            format=FORMAT_INT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            frames_per_buffer=WW_CHUNK,
-        )
+        detected = False
 
-        try:
-            while True:
-                raw = stream.read(WW_CHUNK, exception_on_overflow=False)
-                audio_arr = (
-                    np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-                )
-
+        def callback(indata, frames, time_info, status):
+            nonlocal detected
+            if detected:
+                return
+            audio_arr = indata[:, 0].astype(np.float32)
+            if len(audio_arr) == WW_CHUNK_SAMPLES:
                 predictions = self.ww_model.predict(audio_arr)
-
                 for name, score in predictions.items():
                     if score >= WW_THRESHOLD:
-                        print(f"[AUDIO] Wake word detectado! '{name}' (score: {score:.2f})")
-                        return True
+                        print(f"[AUDIO] Wake word: '{name}' (score: {score:.2f})")
+                        detected = True
 
-        except OSError as e:
-            print(f"[AUDIO] Error de stream en wake word: {e}")
+        try:
+            with sd.InputStream(
+                samplerate=RATE,
+                channels=CHANNELS,
+                dtype=DTYPE,
+                blocksize=WW_CHUNK_SAMPLES,
+                callback=callback,
+            ):
+                while not detected:
+                    time.sleep(0.05)
+        except Exception as e:
+            print(f"[AUDIO] Error en wake word stream: {e}")
             return False
-        finally:
-            stream.stop_stream()
-            stream.close()
+
+        return True
 
     # --------------------------------------------------------
     # 2. GRABACION CON VAD
     # --------------------------------------------------------
     def record_command(self) -> bytes | None:
-        """
-        Graba el microfono hasta detectar silencio usando VAD.
-        Retorna bytes PCM (16kHz, 16-bit mono) o None si no hay voz.
-        """
-        if self.pa is None:
-            return None
-
-        stream = self.pa.open(
-            format=FORMAT_INT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            frames_per_buffer=VAD_CHUNK,
-        )
-
+        """Graba hasta detectar silencio con VAD. Retorna PCM bytes o None."""
         frames = []
         speech_detected = False
         silence_frames = 0
-        silence_limit = int(SILENCE_TIMEOUT * RATE / VAD_CHUNK)
+        silence_limit = int(SILENCE_TIMEOUT * RATE / VAD_CHUNK_SAMPLES)
         start = time.time()
+        stop_event = threading.Event()
+
+        def callback(indata, frame_count, time_info, status):
+            nonlocal speech_detected, silence_frames
+            if stop_event.is_set():
+                raise sd.CallbackStop()
+
+            chunk = indata[:, 0].astype(np.int16)
+            raw = chunk.tobytes()
+            frames.append(raw)
+
+            # VAD
+            if self.vad and len(raw) == VAD_CHUNK_SAMPLES * SAMPLE_WIDTH:
+                try:
+                    is_speech = self.vad.is_speech(raw, RATE)
+                except Exception:
+                    is_speech = self._energy_speech(chunk)
+            else:
+                is_speech = self._energy_speech(chunk)
+
+            if is_speech:
+                speech_detected = True
+                silence_frames = 0
+            elif speech_detected:
+                silence_frames += 1
+
+            elapsed = time.time() - start
+
+            if speech_detected and silence_frames >= silence_limit:
+                stop_event.set()
+                raise sd.CallbackStop()
+            if elapsed >= MAX_RECORD_SECONDS:
+                stop_event.set()
+                raise sd.CallbackStop()
+            if not speech_detected and elapsed >= PRE_SPEECH_TIMEOUT:
+                stop_event.set()
+                raise sd.CallbackStop()
 
         try:
-            while True:
-                frame = stream.read(VAD_CHUNK, exception_on_overflow=False)
-
-                # Deteccion de voz
-                if self.vad:
-                    try:
-                        is_speech = self.vad.is_speech(frame, RATE)
-                    except Exception:
-                        is_speech = self._energy_based_speech(frame)
-                else:
-                    is_speech = self._energy_based_speech(frame)
-
-                frames.append(frame)
-
-                if is_speech:
-                    speech_detected = True
-                    silence_frames = 0
-                elif speech_detected:
-                    silence_frames += 1
-
-                elapsed = time.time() - start
-
-                # Condiciones de parada
-                if speech_detected and silence_frames >= silence_limit:
-                    print(f"[AUDIO] Grabacion completa ({elapsed:.1f}s de audio).")
-                    break
-                if elapsed >= MAX_RECORD_SECONDS:
-                    print("[AUDIO] Tiempo maximo de grabacion alcanzado.")
-                    break
-                if not speech_detected and elapsed >= PRE_SPEECH_TIMEOUT:
-                    print("[AUDIO] Sin voz detectada. Timeout.")
-                    return None
-
-        except OSError as e:
-            print(f"[AUDIO] Error de stream en grabacion: {e}")
-        finally:
-            stream.stop_stream()
-            stream.close()
+            with sd.InputStream(
+                samplerate=RATE,
+                channels=CHANNELS,
+                dtype=DTYPE,
+                blocksize=VAD_CHUNK_SAMPLES,
+                callback=callback,
+            ):
+                stop_event.wait(timeout=MAX_RECORD_SECONDS + 2)
+        except Exception as e:
+            if "CallbackStop" not in str(type(e).__name__):
+                print(f"[AUDIO] Error en grabacion: {e}")
 
         if not speech_detected:
+            print("[AUDIO] Sin voz detectada. Timeout.")
             return None
 
+        print(f"[AUDIO] Grabacion completa ({time.time()-start:.1f}s).")
         return b"".join(frames)
 
-    def _energy_based_speech(self, frame: bytes) -> bool:
-        """Deteccion de voz basada en energia de audio (fallback sin webrtcvad)."""
-        audio = np.frombuffer(frame, dtype=np.int16).astype(np.float32)
-        rms = np.sqrt(np.mean(audio ** 2))
-        return rms > 500  # Umbral ajustable
+    def _energy_speech(self, chunk: np.ndarray) -> bool:
+        """Deteccion de voz por RMS (fallback sin webrtcvad)."""
+        rms = np.sqrt(np.mean(chunk.astype(np.float32) ** 2))
+        return rms > 600
 
     # --------------------------------------------------------
-    # 3. TRANSCRIPCION (STT)
+    # 3. TRANSCRIPCION STT
     # --------------------------------------------------------
     def transcribe(self, audio_bytes: bytes) -> str | None:
-        """
-        Transcribe bytes de audio PCM a texto usando Google Speech Recognition.
-        Intenta espanol primero, luego ingles como fallback.
-        """
+        """Transcribe bytes PCM a texto con Google Speech Recognition."""
         if not SR_AVAILABLE or self.recognizer is None:
             print("[AUDIO] SpeechRecognition no disponible.")
             return None
 
         audio_data = sr.AudioData(audio_bytes, RATE, SAMPLE_WIDTH)
-
-        # Intentar espanol
         try:
             text = self.recognizer.recognize_google(audio_data, language="es-ES")
             print(f"[AUDIO] Transcripcion: '{text}'")
@@ -240,16 +221,8 @@ class AudioHandler:
             print(f"[AUDIO] Error en servicio STT: {e}")
             return None
         except Exception as e:
-            print(f"[AUDIO] Error inesperado en transcripcion: {e}")
+            print(f"[AUDIO] Error inesperado: {e}")
             return None
 
-    # --------------------------------------------------------
-    # LIMPIEZA
-    # --------------------------------------------------------
     def close(self):
-        """Libera los recursos de PyAudio."""
-        try:
-            if self.pa:
-                self.pa.terminate()
-        except Exception:
-            pass
+        pass
