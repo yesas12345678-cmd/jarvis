@@ -172,47 +172,21 @@ class SystemTools:
     # --------------------------------------------------------
     # 2. CAPTURA Y VISION DE PANTALLA
     # --------------------------------------------------------
-    def _attach_interactive_desktop(self):
-        """Conecta el hilo actual a la estacion de ventanas interactiva del usuario (winsta0/default)."""
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            hwinsta = user32.OpenWindowStationW("winsta0", False, 0xF037F)
-            if hwinsta:
-                user32.SetProcessWindowStation(hwinsta)
-                hdesk = user32.OpenDesktopW("default", 0, False, 0x1FF)
-                if hdesk:
-                    user32.SetThreadDesktop(hdesk)
-        except Exception:
-            pass
-
     def capturar_pantalla(self):
-        """Toma una captura de pantalla del escritorio activo."""
-        self._attach_interactive_desktop()
-        img = None
-        if PIL_AVAILABLE:
-            try:
-                img = ImageGrab.grab(all_screens=True)
-            except Exception:
-                try:
-                    img = ImageGrab.grab()
-                except Exception as e:
-                    print(f"[TOOLS] ImageGrab error: {e}")
+        """Toma una captura de pantalla del escritorio activo usando el capturador aislado."""
+        try:
+            import sys
+            grabber_py = os.path.join(os.path.dirname(__file__), "screen_grabber.py")
+            img_path = os.path.join(os.path.dirname(__file__), "pantalla_actual.jpg")
+            res = subprocess.run([sys.executable, grabber_py, img_path], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0 and os.path.exists(img_path):
+                from PIL import Image
+                return Image.open(img_path)
+        except Exception as e:
+            print(f"[TOOLS] Error en screen_grabber: {e}")
 
-        if img is None and PYAUTOGUI_AVAILABLE:
-            try:
-                img = pyautogui.screenshot()
-            except Exception as e:
-                print(f"[TOOLS] pyautogui screenshot error: {e}")
+        return None
 
-        if img is not None:
-            try:
-                save_path = os.path.join(os.path.dirname(__file__), "pantalla_actual.jpg")
-                img.convert("RGB").save(save_path, quality=80)
-            except Exception:
-                pass
-
-        return img
 
     def ver_pantalla_analisis(self, pregunta: str = "Describe lo que ves en la pantalla:") -> str:
         """Captura la pantalla y la envia al modelo multimodal Gemini para describirla."""
