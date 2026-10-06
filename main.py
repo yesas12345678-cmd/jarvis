@@ -1,6 +1,6 @@
 """
 main.py - Bucle principal de J.A.R.V.I.S.
-Orquesta el pipeline completo: wake word -> grabacion -> STT -> Gemini -> TTS.
+Orquestador inteligente con captura continua en espanol, Gemini y TTS.
 """
 
 import os
@@ -8,7 +8,6 @@ import sys
 import signal
 from dotenv import load_dotenv
 
-# Cargar variables de entorno ANTES de importar los modulos
 load_dotenv()
 
 from audio_handler import AudioHandler
@@ -16,59 +15,36 @@ from gemini_agent import GeminiAgent
 from tts_handler import TTSHandler
 
 
-def verify_environment() -> bool:
-    """Verifica que las variables de entorno necesarias esten configuradas."""
-    missing = []
-    if not os.environ.get("GEMINI_API_KEY"):
-        missing.append("GEMINI_API_KEY")
-    if missing:
-        print(f"[ERROR] Faltan variables de entorno en .env: {', '.join(missing)}")
-        return False
-    return True
-
-
 def main():
     print("=" * 62)
     print("  J.A.R.V.I.S. - Just A Rather Very Intelligent System")
-    print("  Version 3.0 | Motor: Python + Gemini + edge-tts")
+    print("  Version 3.1 | Motor: Python + Gemini + edge-tts")
     print("=" * 62)
 
-    if not verify_environment():
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("[ERROR] Falta GEMINI_API_KEY en el archivo .env")
         sys.exit(1)
 
-    # ---- Inicializar subsistemas ----
-    print("\n[INIT] Cargando subsistemas...\n")
+    print("\n[INIT] Inicializando subsistemas...\n")
 
-    try:
-        audio = AudioHandler()
-        print("[INIT] OK - Sistema de audio")
-    except Exception as e:
-        print(f"[INIT] ERROR - Audio: {e}")
-        sys.exit(1)
-
+    audio = AudioHandler()
     tts = TTSHandler()
-    print("[INIT] OK - Sintetizador de voz (edge-tts)")
-
-    try:
-        agent = GeminiAgent()
-        print("[INIT] OK - Agente Gemini con Function Calling")
-    except Exception as e:
-        print(f"[INIT] ERROR - Gemini: {e}")
-        sys.exit(1)
+    agent = GeminiAgent()
 
     print("\n" + "=" * 62)
-    print("[JARVIS] Todos los sistemas operativos.")
-    print("[JARVIS] Di 'Hey Jarvis' para activar (o presiona Enter en modo texto).")
-    print("[JARVIS] Presiona Ctrl+C para salir.")
+    print("[JARVIS] SISTEMAS COMPLETAMENTE OPERATIVOS.")
+    print("[JARVIS] Puede decir directamente frases como:")
+    print("         - 'Jarvis, abre la calculadora'")
+    print("         - 'Jarvis, abre el bloc de notas'")
+    print("         - 'Oye Jarvis' (y esperar el pitido para pedirle algo)")
+    print("[JARVIS] Presione Ctrl+C para salir.")
     print("=" * 62 + "\n")
 
-    # Anuncio de inicio
-    tts.speak("Sistemas en linea. J.A.R.V.I.S. listo para operar. A su servicio, Senior.")
+    tts.speak("Sistemas en linea. J.A.R.V.I.S. a su servicio, Señor.")
 
-    # ---- Manejador de cierre gracioso ----
     def shutdown(sig=None, frame=None):
-        print("\n[JARVIS] Cerrando sistemas...")
-        tts.speak("Apagando sistemas. Hasta pronto, Senior.")
+        print("\n[JARVIS] Desconectando sistemas...")
+        tts.speak("Hasta luego, Señor.")
         audio.close()
         tts.close()
         sys.exit(0)
@@ -77,53 +53,37 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, shutdown)
 
-    # ---- BUCLE PRINCIPAL ----
     while True:
         try:
-            # PASO 1: Escucha pasiva -> esperar wake word
-            detected = audio.listen_for_wake_word()
-            if not detected:
+            status, command = audio.listen_and_capture()
+            if status is None:
                 continue
 
-            # PASO 2: Sonido de activacion
-            tts.speak_activation()
+            # Si solo dijo "Jarvis", emitir pitido y pedir la orden
+            if not command:
+                tts.speak_activation()
+                print("\n[JARVIS] >>> ¿Qué desea ordenar, Señor? (hable ahora) <<<")
+                command = audio.record_followup()
 
-            # PASO 3: Grabar comando con VAD
-            print("\n[JARVIS] >>> ESCUCHANDO SU ORDEN... (hable ahora) <<<")
-            audio_bytes = audio.record_command()
-
-            if audio_bytes is None:
-                print("[JARVIS] Sin voz detectada. Volviendo a modo alerta.\n")
+            if not command:
+                tts.speak("¿En qué puedo asistirle, Señor?")
                 continue
 
-            # PASO 4: Transcripcion de voz a texto (STT)
-            print("[JARVIS] Transcribiendo audio...")
-            command_text = audio.transcribe(audio_bytes)
+            print(f"\n[JARVIS] Ejecutando orden: \"{command}\"")
 
-            if not command_text:
-                tts.speak("No he podido entender la orden, Señor.")
-                print("[JARVIS] Volviendo a escucha pasiva...\n")
-                continue
+            response_text = agent.process_command(command)
 
-            print(f"[JARVIS] Orden recibida: '{command_text}'")
-            print("[JARVIS] Procesando con Gemini...")
-
-            # PASO 5: Procesar con Gemini (incluye Function Calling automatico)
-            response_text = agent.process_command(command_text)
-
-            # PASO 6: Hablar la respuesta final
             if response_text:
                 tts.speak(response_text)
             else:
                 print("[JARVIS] Sin respuesta del agente.")
 
-            print("\n[JARVIS] Listo. Esperando 'Hey Jarvis'...\n")
+            print("\n[JARVIS] Esperando nueva orden...\n")
 
         except KeyboardInterrupt:
             shutdown()
         except Exception as e:
-            print(f"[JARVIS][ERROR] Error inesperado en el bucle principal: {e}")
-            # No crashear; continuar el bucle
+            print(f"[JARVIS][ERROR]: {e}")
             continue
 
 
