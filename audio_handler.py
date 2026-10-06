@@ -134,7 +134,14 @@ class AudioHandler:
                 while not stop_event.is_set():
                     time.sleep(0.04)
         except Exception as e:
-            print(f"[AUDIO] Stream: {e}")
+            print(f"[AUDIO] Reconectando dispositivo de audio: {e}")
+            time.sleep(1.2)
+            try:
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
+            return None, None
 
         if not speech_started or not frames:
             return None, None

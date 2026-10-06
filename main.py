@@ -85,6 +85,8 @@ def main():
             shutdown()
         except Exception as e:
             print(f"[JARVIS][ERROR]: {e}")
+            import time
+            time.sleep(1.0)
             continue
 
 
