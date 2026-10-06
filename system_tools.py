@@ -1,6 +1,9 @@
 """
-system_tools.py - Herramientas del sistema para J.A.R.V.I.S.
-Implementa las funciones fisicas que Gemini puede invocar mediante Function Calling.
+system_tools.py - Herramientas de control del sistema, vision y automatizacion GUI para J.A.R.V.I.S.
+Soporta:
+1. Abrir aplicaciones del sistema con mapeos directos y busqueda difusa.
+2. Gestion de archivos y comandos de terminal.
+3. Control total de interfaz grafica: ver pantalla (vision multimodal), clicks, escribir texto, atajos.
 """
 
 import subprocess
@@ -10,19 +13,22 @@ from pathlib import Path
 
 try:
     import pyautogui
+    import pyperclip
     PYAUTOGUI_AVAILABLE = True
     pyautogui.FAILSAFE = True
-    pyautogui.PAUSE = 0.1
+    pyautogui.PAUSE = 0.05
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
-    print("[TOOLS] pyautogui no disponible. La funcion control_interfaz estara deshabilitada.")
+    print("[TOOLS] pyautogui o pyperclip no disponibles.")
+
+try:
+    from PIL import Image, ImageGrab
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 
-# ---------------------------------------------------------------
-# Mapa de nombres comunes de aplicaciones a comandos del sistema
-# ---------------------------------------------------------------
 APP_COMMANDS = {
-    # Utilidades de Windows
     "calculadora": "calc",
     "calculator": "calc",
     "notepad": "notepad",
@@ -36,9 +42,7 @@ APP_COMMANDS = {
     "administrador de tareas": "taskmgr",
     "task manager": "taskmgr",
     "configuracion": "ms-settings:",
-    "configuracion del sistema": "ms-settings:",
 
-    # Navegadores
     "chrome": "chrome",
     "google chrome": "chrome",
     "firefox": "firefox",
@@ -46,34 +50,24 @@ APP_COMMANDS = {
     "microsoft edge": "msedge",
     "navegador": "msedge",
 
-    # Editores / IDEs
     "vscode": "code",
     "visual studio code": "code",
     "vs code": "code",
     "cursor": "cursor",
-    "pycharm": "pycharm",
-    "notepad++": "notepad++",
 
-    # Comunicacion
     "discord": "discord",
     "telegram": "telegram",
     "slack": "slack",
     "whatsapp": "whatsapp:",
-    "teams": "ms-teams:",
 
-    # Multimedia
     "spotify": "spotify",
     "vlc": "vlc",
     "musica": "spotify",
 
-    # Office
     "word": "winword",
     "excel": "excel",
     "powerpoint": "powerpnt",
-    "onenote": "onenote",
-    "outlook": "outlook",
 
-    # Gaming
     "steam": "steam",
     "epic games": "com.epicgames.launcher://",
     "sk launcher": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
@@ -84,7 +78,7 @@ APP_COMMANDS = {
 
 
 class SystemTools:
-    """Clase que agrupa todas las herramientas de control del sistema."""
+    """Conjunto de herramientas nativas para control del ordenador."""
 
     BLOCKED_COMMANDS = [
         "format c:",
@@ -99,186 +93,235 @@ class SystemTools:
     # 1. ABRIR APLICACION
     # --------------------------------------------------------
     def abrir_aplicacion(self, nombre_app: str) -> str:
-        """Abre una aplicacion por nombre. Intenta mapeado predefinido y luego busqueda difusa."""
+        """Abre una aplicacion por nombre o busqueda difusa."""
         try:
             key = nombre_app.lower().strip()
+            for art in ["el ", "la ", "los ", "las ", "un ", "una "]:
+                if key.startswith(art):
+                    key = key[len(art):]
+
             cmd = APP_COMMANDS.get(key)
+            if not cmd:
+                for k, v in APP_COMMANDS.items():
+                    if key in k or k in key:
+                        cmd = v
+                        break
 
             if cmd:
-                if cmd.endswith(":") or "://" in cmd:
-                    subprocess.Popen(["powershell", "-Command", f"Start-Process '{cmd}'"], shell=False)
-                elif "\\" in cmd:
-                    subprocess.Popen(["powershell", "-Command", f"Start-Process '{cmd}'"], shell=False)
+                if cmd.endswith(":") or "://" in cmd or ("\\" in cmd and os.path.exists(cmd)):
+                    try:
+                        os.startfile(cmd)
+                    except Exception:
+                        subprocess.Popen(["powershell", "-Command", f"Start-Process '{cmd}'"], shell=False)
                 else:
                     subprocess.Popen(cmd, shell=True)
                 print(f"[TOOLS] Abierta: {nombre_app} -> {cmd}")
                 return f"Aplicacion '{nombre_app}' iniciada correctamente."
             else:
-                # Fallback: utilizar script de busqueda difusa en el sistema
                 ps1 = os.path.join(os.path.dirname(__file__), "open-app.ps1")
                 if os.path.exists(ps1):
                     res = subprocess.run(
                         ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps1, "-AppName", nombre_app],
-                        capture_output=True, text=True, timeout=12
+                        capture_output=True, text=True, timeout=5
                     )
                     if res.returncode == 0:
                         return f"Iniciando '{nombre_app}'..."
 
-                # Ultimo recurso: Start-Process nativo
                 result = subprocess.run(
                     ["powershell", "-Command", f"Start-Process '{nombre_app}'"],
-                    capture_output=True, text=True, timeout=8
+                    capture_output=True, text=True, timeout=5
                 )
                 if result.returncode == 0:
                     return f"Iniciando '{nombre_app}'..."
                 else:
                     return f"No se encontro la aplicacion '{nombre_app}' en el sistema."
 
-        except FileNotFoundError:
-            return f"La aplicacion '{nombre_app}' no esta instalada o no se encontro."
-        except subprocess.TimeoutExpired:
-            return f"La apertura de '{nombre_app}' tardo demasiado."
         except Exception as e:
-            print(f"[TOOLS] Error abriendo app: {e}")
             return f"Error al abrir '{nombre_app}': {str(e)}"
 
+    def cerrar_aplicacion(self, nombre_app: str) -> str:
+        """Cierra una aplicacion o proceso en ejecucion."""
+        try:
+            key = nombre_app.lower().strip()
+            for art in ["el ", "la ", "los ", "las ", "un ", "una "]:
+                if key.startswith(art):
+                    key = key[len(art):]
+
+            procs = {
+                "calculadora": "CalculatorApp.exe",
+                "calc": "CalculatorApp.exe",
+                "bloc de notas": "notepad.exe",
+                "notepad": "notepad.exe",
+                "spotify": "Spotify.exe",
+                "chrome": "chrome.exe",
+                "edge": "msedge.exe",
+                "discord": "Discord.exe",
+                "sk launcher": "javaw.exe",
+                "sklauncher": "javaw.exe",
+                "minecraft": "javaw.exe",
+                "vlc": "vlc.exe",
+                "terminal": "WindowsTerminal.exe",
+            }
+            exe = procs.get(key, f"{key}.exe")
+            subprocess.run(["taskkill", "/f", "/im", exe], capture_output=True)
+            return f"Aplicacion '{nombre_app}' cerrada."
+        except Exception as e:
+            return f"Error cerrando '{nombre_app}': {e}"
+
+
     # --------------------------------------------------------
-    # 2. GESTIONAR ARCHIVO
+    # 2. CAPTURA Y VISION DE PANTALLA
+    # --------------------------------------------------------
+    def capturar_pantalla(self):
+        """Toma una captura de pantalla del escritorio activo."""
+        img = None
+        if PIL_AVAILABLE:
+            try:
+                img = ImageGrab.grab(all_screens=True)
+            except Exception:
+                pass
+
+        if img is None and PYAUTOGUI_AVAILABLE:
+            try:
+                img = pyautogui.screenshot()
+            except Exception:
+                pass
+
+        if img is not None:
+            try:
+                save_path = os.path.join(os.path.dirname(__file__), "pantalla_actual.jpg")
+                img.convert("RGB").save(save_path, quality=80)
+            except Exception:
+                pass
+
+        return img
+
+    def ver_pantalla_analisis(self, pregunta: str = "Describe lo que ves en la pantalla:") -> str:
+        """Captura la pantalla y la envia al modelo multimodal Gemini para describirla."""
+        img = self.capturar_pantalla()
+        if img is None:
+            return "No se ha podido capturar la pantalla en este momento, Señor."
+
+        try:
+            import google.generativeai as genai
+            w, h = img.size
+            # Redimensionar para transferencia ultra-rapida a la API
+            img_small = img.resize((1024, int(h * 1024 / w)))
+
+            vision_model = genai.GenerativeModel("gemini-flash-lite-latest")
+            prompt = (
+                f"{pregunta}. Responde de forma muy concisa (maximo 2 oraciones), "
+                f"en español y con estilo Jarvis de Iron Man (refiriendote como Señor)."
+            )
+            response = vision_model.generate_content([prompt, img_small])
+            return response.text.strip() if response.text else "No se aprecian detalles claros en pantalla, Señor."
+        except Exception as e:
+            print(f"[TOOLS] Error en analisis de vision: {e}")
+            return f"Error analizando la pantalla: {str(e)}"
+
+    # --------------------------------------------------------
+    # 3. CONTROL DE INTERFAZ: CLICKS, ESCRIBIR, ATAJOS
+    # --------------------------------------------------------
+    def hacer_click(self, x: int = None, y: int = None, tipo: str = "izquierdo", clicks: int = 1) -> str:
+        """Hace clic en coordenadas especificas o en la posicion actual del raton."""
+        if not PYAUTOGUI_AVAILABLE:
+            return "pyautogui no esta disponible."
+
+        try:
+            button = "left" if tipo == "izquierdo" else ("right" if tipo == "derecho" else "middle")
+            if x is not None and y is not None:
+                pyautogui.click(x, y, clicks=clicks, button=button)
+                return f"Clic {tipo} realizado en ({x}, {y})."
+            else:
+                curr_x, curr_y = pyautogui.position()
+                pyautogui.click(clicks=clicks, button=button)
+                return f"Clic {tipo} realizado en la posicion actual ({curr_x}, {curr_y})."
+        except Exception as e:
+            return f"Error haciendo clic: {e}"
+
+    def escribir_texto(self, texto: str, presionar_enter: bool = False) -> str:
+        """Escribe texto al instante usando el portapapeles (compatible con tildes, ñ y simbolos)."""
+        if not PYAUTOGUI_AVAILABLE:
+            return "pyautogui no esta disponible."
+
+        try:
+            pyperclip.copy(texto)
+            time.sleep(0.05)
+            pyautogui.hotkey("ctrl", "v")
+            if presionar_enter:
+                time.sleep(0.05)
+                pyautogui.press("enter")
+            return f"Texto escrito: '{texto[:40]}...'"
+        except Exception as e:
+            return f"Error escribiendo texto: {e}"
+
+    def presionar_tecla(self, tecla: str) -> str:
+        """Presiona una tecla individual (enter, esc, tab, win, space, backspace, etc.)."""
+        if not PYAUTOGUI_AVAILABLE:
+            return "pyautogui no esta disponible."
+        try:
+            pyautogui.press(tecla.lower().strip())
+            return f"Tecla '{tecla}' presionada."
+        except Exception as e:
+            return f"Error presionando tecla: {e}"
+
+    def atajo_teclado(self, teclas: str) -> str:
+        """Ejecuta un atajo de teclado combinado (ej. 'ctrl,c', 'alt,f4', 'win,d')."""
+        if not PYAUTOGUI_AVAILABLE:
+            return "pyautogui no esta disponible."
+        try:
+            keys = [k.strip().lower() for k in teclas.replace("+", ",").split(",")]
+            pyautogui.hotkey(*keys)
+            return f"Atajo {'+'.join(keys)} ejecutado."
+        except Exception as e:
+            return f"Error ejecutando atajo: {e}"
+
+    def desplazar(self, cantidad: int = -400) -> str:
+        """Hace scroll en la pantalla (negativo = abajo, positivo = arriba)."""
+        if not PYAUTOGUI_AVAILABLE:
+            return "pyautogui no esta disponible."
+        try:
+            pyautogui.scroll(cantidad)
+            direccion = "abajo" if cantidad < 0 else "arriba"
+            return f"Desplazamiento hacia {direccion} realizado."
+        except Exception as e:
+            return f"Error desplazando pantalla: {e}"
+
+    # --------------------------------------------------------
+    # 4. GESTION DE ARCHIVOS Y TERMINAL
     # --------------------------------------------------------
     def gestionar_archivo(self, accion: str, ruta: str, contenido: str = None) -> str:
-        """Lee, crea, modifica o lista archivos y directorios del sistema."""
         try:
             path = Path(os.path.expandvars(os.path.expanduser(ruta)))
-
             if accion == "leer":
                 if not path.exists():
                     return f"El archivo '{ruta}' no existe."
-                if path.is_dir():
-                    return f"'{ruta}' es un directorio. Use la accion 'listar'."
                 text = path.read_text(encoding="utf-8", errors="replace")
-                if len(text) > 2000:
-                    text = text[:2000] + "\n... [contenido truncado a 2000 caracteres]"
-                return f"Contenido de '{path.name}':\n{text}"
-
+                return f"Contenido de '{path.name}':\n{text[:1500]}"
             elif accion == "crear":
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(contenido or "", encoding="utf-8")
-                return f"Archivo '{path.name}' creado en '{path.parent}'."
-
+                return f"Archivo '{path.name}' creado."
             elif accion == "modificar":
-                if not path.exists():
-                    return f"El archivo '{ruta}' no existe. Usa 'crear' primero."
                 path.write_text(contenido or "", encoding="utf-8")
-                return f"Archivo '{path.name}' modificado correctamente."
-
+                return f"Archivo '{path.name}' modificado."
             elif accion == "listar":
-                if not path.exists():
-                    return f"El directorio '{ruta}' no existe."
-                if path.is_file():
-                    return f"'{ruta}' es un archivo. Use 'leer' para verlo."
                 items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
-                if not items:
-                    return f"El directorio esta vacio."
-                listing = "\n".join(
-                    f"  {'[DIR]' if i.is_dir() else '[FILE]'} {i.name}" for i in items[:60]
-                )
-                return f"Contenido de '{ruta}':\n{listing}"
-
-            else:
-                return f"Accion '{accion}' no valida. Opciones: leer, crear, modificar, listar."
-
-        except PermissionError:
-            return f"Permiso denegado para acceder a '{ruta}'."
+                return "\n".join(f"{'[DIR]' if i.is_dir() else '[FILE]'} {i.name}" for i in items[:40])
+            return f"Accion '{accion}' no valida."
         except Exception as e:
-            print(f"[TOOLS] Error en gestionar_archivo: {e}")
-            return f"Error al {accion} '{ruta}': {str(e)}"
+            return f"Error en archivo: {e}"
 
-    # --------------------------------------------------------
-    # 3. EJECUTAR COMANDO TERMINAL
-    # --------------------------------------------------------
     def ejecutar_comando_terminal(self, comando: str) -> str:
-        """Ejecuta un comando PowerShell y devuelve su salida."""
-        for blocked in self.BLOCKED_COMMANDS:
-            if blocked.lower() in comando.lower():
-                print(f"[TOOLS][SECURITY] Comando bloqueado: '{comando}'")
-                return "Ese comando esta bloqueado por razones de seguridad."
-
+        for b in self.BLOCKED_COMMANDS:
+            if b.lower() in comando.lower():
+                return "Comando bloqueado por seguridad."
         try:
-            print(f"[TOOLS] Ejecutando: {comando}")
             result = subprocess.run(
                 ["powershell", "-ExecutionPolicy", "Bypass", "-Command", comando],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                encoding="utf-8",
-                errors="replace",
+                capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace"
             )
-            output = result.stdout.strip()
-            errors = result.stderr.strip()
-
-            if output:
-                return output[:1500] + ("\n...[truncado]" if len(output) > 1500 else "")
-            elif errors:
-                return f"Error en el comando: {errors[:500]}"
-            else:
-                return "Comando ejecutado correctamente (sin salida visible)."
-
-        except subprocess.TimeoutExpired:
-            return "El comando excedio el tiempo limite de 30 segundos."
+            out = result.stdout.strip()
+            return out[:1000] if out else "Comando completado sin salida."
         except Exception as e:
-            print(f"[TOOLS] Error ejecutando terminal: {e}")
-            return f"Error al ejecutar comando: {str(e)}"
-
-    # --------------------------------------------------------
-    # 4. CONTROL DE INTERFAZ (pyautogui)
-    # --------------------------------------------------------
-    def control_interfaz(self, accion: str, parametros: dict = None) -> str:
-        """Controla el raton y el teclado usando pyautogui."""
-        if not PYAUTOGUI_AVAILABLE:
-            return "pyautogui no esta disponible. Instala con: pip install pyautogui"
-
-        if parametros is None:
-            parametros = {}
-
-        try:
-            if accion == "click":
-                x, y = parametros.get("x", 0), parametros.get("y", 0)
-                pyautogui.click(x, y)
-                return f"Clic realizado en ({x}, {y})."
-
-            elif accion == "doble_click":
-                x, y = parametros.get("x", 0), parametros.get("y", 0)
-                pyautogui.doubleClick(x, y)
-                return f"Doble clic realizado en ({x}, {y})."
-
-            elif accion == "mover":
-                x, y = parametros.get("x", 0), parametros.get("y", 0)
-                pyautogui.moveTo(x, y, duration=0.4)
-                return f"Raton movido a ({x}, {y})."
-
-            elif accion == "escribir":
-                texto = parametros.get("texto", "")
-                time.sleep(0.3)
-                pyautogui.write(texto, interval=0.05)
-                return f"Texto escrito correctamente."
-
-            elif accion == "hotkey":
-                teclas = parametros.get("teclas", [])
-                if isinstance(teclas, str):
-                    teclas = [t.strip() for t in teclas.split(",")]
-                pyautogui.hotkey(*teclas)
-                return f"Atajo '{'+'.join(teclas)}' ejecutado."
-
-            elif accion == "screenshot":
-                save_path = os.path.expanduser("~/Desktop/jarvis_screenshot.png")
-                pyautogui.screenshot().save(save_path)
-                return f"Captura de pantalla guardada en el escritorio."
-
-            else:
-                return f"Accion '{accion}' no reconocida. Opciones: click, doble_click, mover, escribir, hotkey, screenshot."
-
-        except pyautogui.FailSafeException:
-            return "Seguro de emergencia activado (raton en esquina). Operacion cancelada."
-        except Exception as e:
-            print(f"[TOOLS] Error en control_interfaz: {e}")
-            return f"Error en accion '{accion}': {str(e)}"
+            return f"Error ejecutando comando: {e}"
