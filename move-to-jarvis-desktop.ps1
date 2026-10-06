@@ -1,5 +1,5 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Import-Module VirtualDesktop -Scope CurrentUser -ErrorAction SilentlyContinue
+Import-Module VirtualDesktop -ErrorAction SilentlyContinue
 
 # Ensure Jarvis desktop exists
 $jarvisDesktop = Get-DesktopList | Where-Object { $_.Name -eq 'Jarvis' }

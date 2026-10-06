@@ -1,5 +1,5 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-Import-Module VirtualDesktop -Scope CurrentUser -ErrorAction SilentlyContinue
+Import-Module VirtualDesktop -ErrorAction SilentlyContinue
 
 # Get current desktop and move JARVIS window here
 $currentDesktop = Get-CurrentDesktop

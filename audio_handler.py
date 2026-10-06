@@ -44,8 +44,23 @@ class AudioHandler:
 
         self.ww_model = self._load_wake_word_model()
 
+    @staticmethod
+    def has_input_device() -> bool:
+        """Verifica si el sistema tiene un dispositivo de entrada utilizable."""
+        try:
+            devs = sd.query_devices()
+            for d in devs:
+                if d.get("max_input_channels", 0) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _calibrate_noise(self) -> float:
         """Calibra el nivel de sonido base en reposo."""
+        if not self.has_input_device():
+            print("[AUDIO] AVISO: No se detecta micrófono activo conectado en el sistema.")
+            return 25.0
         try:
             samples = int(RATE * 0.3)
             rec = sd.rec(samples, samplerate=RATE, channels=CHANNELS, dtype=DTYPE)
@@ -134,8 +149,10 @@ class AudioHandler:
                 while not stop_event.is_set():
                     time.sleep(0.04)
         except Exception as e:
-            print(f"[AUDIO] Reconectando dispositivo de audio: {e}")
-            time.sleep(1.2)
+            if not hasattr(self, "_last_audio_err_time") or (time.time() - self._last_audio_err_time > 10):
+                print(f"[AUDIO] Esperando dispositivo de entrada de audio/micrófono válido ({e})")
+                self._last_audio_err_time = time.time()
+            time.sleep(2.5)
             try:
                 sd._terminate()
                 sd._initialize()
