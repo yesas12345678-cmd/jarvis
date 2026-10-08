@@ -203,17 +203,13 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. Cerebro Gemini Ultra-Rápido (Flash-Lite ~650ms)
+    // 2. Cerebro Gemini Paralelo Ultra-Rápido (~750ms con Promise.any)
     if (geminiKey) {
-      const modelsToTry = [
-        "gemini-flash-lite-latest",
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-      ];
-      const genAI = new GoogleGenerativeAI(geminiKey);
+      try {
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const fastModels = ["gemini-3.5-flash-lite", "gemini-flash-lite-latest"];
 
-      for (const modelName of modelsToTry) {
-        try {
+        const generateFromModel = async (modelName: string) => {
           const model = genAI.getGenerativeModel({
             model: modelName,
             systemInstruction: SYSTEM_PROMPT,
@@ -223,20 +219,20 @@ export async function POST(req: Request) {
             },
           });
 
-          // Timeout estricto de 3.5 segundos
-          const callPromise = model.generateContent(fullPrompt);
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timeout tras 3500ms en ${modelName}`)), 3500)
+            setTimeout(() => reject(new Error(`Timeout tras 2500ms en ${modelName}`)), 2500)
           );
 
-          const result = await Promise.race([callPromise, timeoutPromise]);
+          const result = await Promise.race([model.generateContent(fullPrompt), timeoutPromise]);
           const text = result.response.text();
-          const parsed = parseJSONSafe(text);
-          const enriched = await enrichResponseWithTools(parsed, message);
-          return NextResponse.json(enriched);
-        } catch (geminiErr: any) {
-          console.warn(`[BRAIN_GEMINI_MODEL_FAILED] ${modelName}:`, geminiErr?.message || geminiErr);
-        }
+          return parseJSONSafe(text);
+        };
+
+        const fastestWinner = await Promise.any(fastModels.map((m) => generateFromModel(m)));
+        const enriched = await enrichResponseWithTools(fastestWinner, message);
+        return NextResponse.json(enriched);
+      } catch (geminiRaceErr) {
+        console.warn("[BRAIN_GEMINI_RACE_FAILED] Fallback secundario:", geminiRaceErr);
       }
     }
 
