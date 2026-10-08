@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { USER_NAME, ASSISTANT_NAME, ASSISTANT_PRONUNCIATION } from "@/lib/constants";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import dns from "dns";
+
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {}
 
 const SYSTEM_PROMPT = `
 Eres ${ASSISTANT_NAME} (pronunciado ${ASSISTANT_PRONUNCIATION}), un asistente de inteligencia artificial personal de alta gama con interfaz holográfica, al servicio de ${USER_NAME}.
@@ -73,23 +78,27 @@ export async function POST(req: Request) {
 
     // 2. Cerebro Gemini (disponible en entorno local)
     if (geminiKey) {
-      try {
-        const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
-          systemInstruction: SYSTEM_PROMPT,
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.4,
-          },
-        });
+      const modelsToTry = ["gemini-flash-latest", "gemini-flash-lite-latest"];
+      const genAI = new GoogleGenerativeAI(geminiKey);
 
-        const result = await model.generateContent(message);
-        const text = result.response.text();
-        const parsed = parseJSONSafe(text);
-        return NextResponse.json(parsed);
-      } catch (geminiErr: any) {
-        console.error("[BRAIN_GEMINI_ERROR]", geminiErr);
+      for (const modelName of modelsToTry) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: modelName,
+            systemInstruction: SYSTEM_PROMPT,
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0.6,
+            },
+          });
+
+          const result = await model.generateContent(message);
+          const text = result.response.text();
+          const parsed = parseJSONSafe(text);
+          return NextResponse.json(parsed);
+        } catch (geminiErr: any) {
+          console.warn(`[BRAIN_GEMINI_MODEL_FAILED] ${modelName}:`, geminiErr?.message || geminiErr);
+        }
       }
     }
 
