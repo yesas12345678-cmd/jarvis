@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { HolographicCore } from "@/components/HolographicCore";
 import { StatusReadout } from "@/components/StatusReadout";
 import { ActionModal } from "@/components/ActionModal";
+import { MemoryModal } from "@/components/MemoryModal";
 import {
   USER_NAME,
   ASSISTANT_NAME,
@@ -22,11 +23,12 @@ import {
   Terminal,
   RotateCcw,
   Radio,
+  Brain,
 } from "lucide-react";
 
-// Variantes fonéticas para activación por voz ("Yud", "Jude", "Hey Jude", etc.)
+// Variantes fonéticas amplias para activación ("Yud", "Jude", "Oye", etc.) y palabras de interrupción
 const WAKE_WORD_REGEX =
-  /\b(jude|yud|llud|iud|yut|jud|yood|you\s*d|hey\s*jude|oye\s*jude|oye\s*yud|hey\s*yud)\b/i;
+  /\b(jude|yud|llud|iud|yut|jud|yood|you\s*d|lud|yur|you|yu|iu|oye\s*yud|hey\s*yud|oye\s*jude|hey\s*jude|oye|para|espera|silencio|cállate|callate|alto|basta|stop)\b/i;
 
 export default function AssistantPage() {
   const [state, setState] = useState<AssistantState>("idle");
@@ -39,6 +41,8 @@ export default function AssistantPage() {
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isHandsFree, setIsHandsFree] = useState<boolean>(true);
   const [history, setHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [permanentMemories, setPermanentMemories] = useState<string[]>([]);
+  const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
 
   const recognitionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -60,7 +64,7 @@ export default function AssistantPage() {
     isHandsFreeRef.current = isHandsFree;
   }, [isHandsFree]);
 
-  // Silenciar inmediatamente la voz de Jude para dar paso a Vaita
+  // Silenciar inmediatamente la voz de Jude para dar paso a Vaita (corte a 0ms)
   const stopSpeaking = () => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -73,15 +77,19 @@ export default function AssistantPage() {
     setAudioLevel(0);
   };
 
-  // Cargar memoria previa desde almacenamiento local
+  // Cargar memoria histórica (recuerdos permanentes y turnos recientes) desde localStorage
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("jude_memory");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setHistory(parsed);
-        }
+      const savedHistory = localStorage.getItem("jude_memory");
+      if (savedHistory) {
+        const parsed = JSON.parse(savedHistory);
+        if (Array.isArray(parsed)) setHistory(parsed);
+      }
+
+      const savedMem = localStorage.getItem("jude_permanent_memories");
+      if (savedMem) {
+        const parsedMem = JSON.parse(savedMem);
+        if (Array.isArray(parsedMem)) setPermanentMemories(parsedMem);
       }
     } catch {}
   }, []);
@@ -89,16 +97,39 @@ export default function AssistantPage() {
   const saveHistory = (newHistory: Array<{ role: "user" | "assistant"; content: string }>) => {
     setHistory(newHistory);
     try {
-      localStorage.setItem("jude_memory", JSON.stringify(newHistory.slice(-20)));
+      localStorage.setItem("jude_memory", JSON.stringify(newHistory.slice(-25)));
     } catch {}
   };
 
-  const clearMemory = () => {
+  const clearRecentHistory = () => {
     setHistory([]);
     try {
       localStorage.removeItem("jude_memory");
     } catch {}
-    setReadoutText("MEMORIA REINICIADA // TABULA RASA");
+    setReadoutText("CONVERSACIÓN ACTUAL REINICIADA");
+  };
+
+  const handleAddPermanentMemory = (text: string) => {
+    const updated = [...permanentMemories, text];
+    setPermanentMemories(updated);
+    try {
+      localStorage.setItem("jude_permanent_memories", JSON.stringify(updated));
+    } catch {}
+  };
+
+  const handleDeletePermanentMemory = (index: number) => {
+    const updated = permanentMemories.filter((_, i) => i !== index);
+    setPermanentMemories(updated);
+    try {
+      localStorage.setItem("jude_permanent_memories", JSON.stringify(updated));
+    } catch {}
+  };
+
+  const handleClearAllPermanentMemories = () => {
+    setPermanentMemories([]);
+    try {
+      localStorage.removeItem("jude_permanent_memories");
+    } catch {}
   };
 
   // Iniciar análisis de amplitud del micrófono
@@ -128,7 +159,6 @@ export default function AssistantPage() {
           sum += dataArray[i];
         }
         const avg = sum / bufferLength / 255;
-        // Si está en reposo solo leve movimiento, si está escuchando o hablando amplificar
         setAudioLevel(avg);
         animationFrameRef.current = requestAnimationFrame(checkLevel);
       };
@@ -185,26 +215,27 @@ export default function AssistantPage() {
         const heardText = (finalText || interimText).trim();
         if (!heardText) return;
 
-        // --- MODO MANOS LIBRES (WAKE WORD: "YUD" / "JUDE") ---
+        // 1. Interrupción instantánea (Barge-in): Si Jude está hablando y escucha voz, cortar de inmediato
+        if (stateRef.current === "speaking") {
+          stopSpeaking();
+          stateRef.current = "listening";
+          setState("listening");
+          setReadoutText("INTERRUPCIÓN DETECTADA // ESCUCHANDO");
+        }
+
+        // 2. Modo Manos Libres (Wake Word: "Yud" / "Jude")
         if (isHandsFreeRef.current) {
           const lower = heardText.toLowerCase();
           const wakeMatch = lower.match(WAKE_WORD_REGEX);
 
-          // 1. Interrupción si Jude está hablando y escucha "Yud" o su nombre
-          if (stateRef.current === "speaking" && wakeMatch) {
-            stopSpeaking();
-            stateRef.current = "listening";
-            setState("listening");
-          }
-
-          // 2. Activación desde reposo (idle)
+          // Activación desde reposo (idle)
           if (stateRef.current === "idle" && wakeMatch) {
             stopSpeaking();
             setState("listening");
             stateRef.current = "listening";
             setReadoutText("NÚCLEO ACTIVADO // DI 'YUD'");
 
-            // Extraer lo que dijo después de "Yud" (ej: "Yud, qué hora es")
+            // Extraer lo que dijo después de la llamada
             const commandAfter = heardText
               .slice(wakeMatch.index! + wakeMatch[0].length)
               .replace(/^[,.:;\s]+/, "")
@@ -219,10 +250,9 @@ export default function AssistantPage() {
               } else {
                 silenceTimerRef.current = setTimeout(() => {
                   executeCommand(commandAfter);
-                }, 1300);
+                }, 650);
               }
             } else {
-              // Solo dijo "Yud", esperar la orden
               isAwaitingCommandRef.current = true;
               setTranscript("");
               setReadoutText("¿EN QUÉ PUEDO AYUDARLE, VAITA?");
@@ -230,7 +260,7 @@ export default function AssistantPage() {
             return;
           }
 
-          // 3. Captura de orden si ya estaba despierto
+          // Captura de orden tras despertarse
           if (stateRef.current === "listening" || isAwaitingCommandRef.current) {
             const cleanText = heardText
               .replace(WAKE_WORD_REGEX, "")
@@ -248,14 +278,14 @@ export default function AssistantPage() {
                 silenceTimerRef.current = setTimeout(() => {
                   isAwaitingCommandRef.current = false;
                   executeCommand(cleanText);
-                }, 1400);
+                }, 650);
               }
             }
             return;
           }
         }
 
-        // Si no está en manos libres (modo Push to talk clásico)
+        // Push to talk manual
         setTranscript(heardText);
       };
 
@@ -267,7 +297,6 @@ export default function AssistantPage() {
 
       recognition.onend = () => {
         setIsRecording(false);
-        // Si manos libres está activo, reconectar automáticamente para no perder la palabra clave
         if (isHandsFreeRef.current) {
           setTimeout(() => {
             if (isHandsFreeRef.current && recognitionRef.current) {
@@ -275,13 +304,12 @@ export default function AssistantPage() {
                 recognitionRef.current.start();
               } catch {}
             }
-          }, 300);
+          }, 200);
         }
       };
 
       recognitionRef.current = recognition;
 
-      // Iniciar reconocimiento automáticamente para escucha continua si manos libres está activo
       try {
         recognition.start();
         startAudioAnalysis();
@@ -294,7 +322,6 @@ export default function AssistantPage() {
     };
   }, []);
 
-  // Alternar entre Manos Libres ("Yud") y Push-to-Talk
   const toggleHandsFree = () => {
     const nextVal = !isHandsFree;
     setIsHandsFree(nextVal);
@@ -335,14 +362,13 @@ export default function AssistantPage() {
     }
   };
 
-  // Procesar comando con el cerebro de Jude
+  // Procesar comando con el cerebro de Jude (Gemini Ultra-Rápido ~650ms + Memoria Permanente)
   const executeCommand = async (command: string) => {
     if (!command.trim()) return;
     setState("processing");
     stateRef.current = "processing";
     setReadoutText("PROCESANDO INTENCIÓN");
 
-    // Agregar turno de usuario
     const updatedHistory = [...history, { role: "user" as const, content: command }];
     saveHistory(updatedHistory);
 
@@ -350,7 +376,11 @@ export default function AssistantPage() {
       const response = await fetch("/api/brain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: command, history: updatedHistory }),
+        body: JSON.stringify({
+          message: command,
+          history: updatedHistory,
+          permanentMemories,
+        }),
       });
 
       const data = await response.json();
@@ -358,8 +388,22 @@ export default function AssistantPage() {
       setLastReply(replyText);
       setReadoutText(data.readout || "RESPUESTA SINTETIZADA");
 
-      // Guardar turno del asistente en la memoria
+      // Guardar turno del asistente
       saveHistory([...updatedHistory, { role: "assistant" as const, content: replyText }]);
+
+      // Si Jude aprendió un nuevo hecho permanente para recordar siempre
+      if (data.new_memory && typeof data.new_memory === "string") {
+        setPermanentMemories((prev) => {
+          if (!prev.includes(data.new_memory)) {
+            const updated = [...prev, data.new_memory];
+            try {
+              localStorage.setItem("jude_permanent_memories", JSON.stringify(updated));
+            } catch {}
+            return updated;
+          }
+          return prev;
+        });
+      }
 
       // Si hay acción asociada (email o calendar)
       if (data.action && data.action.type !== "none") {
@@ -483,10 +527,20 @@ export default function AssistantPage() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 text-xs font-mono">
+          {/* Botón Banco de Memoria Permanente */}
+          <button
+            onClick={() => setShowMemoryModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-core-amber/10 border border-core-amber/30 hover:border-core-amber text-core-amber transition-all shadow-hologram"
+            title="Ver los hechos y datos permanentes que Jude recuerda sobre ti"
+          >
+            <Brain className="w-3.5 h-3.5" />
+            <span>MEMORIA: {permanentMemories.length} RECUERDOS</span>
+          </button>
+
           {/* Toggle Manos Libres ("Yud") vs Push-to-Talk */}
           <button
             onClick={toggleHandsFree}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all ${
+            className={`hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all ${
               isHandsFree
                 ? "bg-core-amber/15 border-core-amber text-core-amber shadow-hologram"
                 : "bg-panel border-neutral-800 text-neutral-400 hover:text-white"
@@ -494,23 +548,20 @@ export default function AssistantPage() {
             title="Alternar entre activación por voz 'Yud' y pulsar para hablar"
           >
             <Radio className={`w-3 h-3 ${isHandsFree ? "animate-pulse" : ""}`} />
-            <span>{isHandsFree ? "WAKE WORD: 'YUD' ACTIVO" : "PUSH-TO-TALK"}</span>
+            <span>{isHandsFree ? "WAKE WORD: 'YUD'" : "PUSH-TO-TALK"}</span>
           </button>
 
+          {/* Reiniciar conversación actual */}
           <button
-            onClick={clearMemory}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 hover:border-core-amber/50 text-neutral-300 hover:text-white transition-colors"
-            title="Reiniciar contexto de memoria"
+            onClick={clearRecentHistory}
+            className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded-full bg-panel border border-neutral-800 hover:border-core-amber/30 text-neutral-400 hover:text-white transition-colors"
+            title="Limpiar hilo de la conversación actual"
           >
-            <RotateCcw className="w-3 h-3 text-core-amber" />
-            <span>
-              MEMORIA:{" "}
-              <strong className="text-core-light">{history.length}</strong>{" "}
-              {history.length === 1 ? "TURNO" : "TURNOS"}
-            </span>
+            <RotateCcw className="w-3 h-3" />
+            <span>{history.length} turnos</span>
           </button>
 
-          <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 text-neutral-300">
+          <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 text-neutral-300">
             <ShieldCheck className="w-3.5 h-3.5 text-core-amber" />
             <span>
               USUARIO: <strong className="text-white">{USER_NAME}</strong>
@@ -543,7 +594,7 @@ export default function AssistantPage() {
                 <span>MANOS LIBRES ACTIVO · SOLO DI: &quot;YUD&quot;</span>
               </div>
               <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">
-                No necesitas pulsar nada · Di &quot;Yud, ¿qué hora es?&quot;
+                Si Jude está hablando, di &quot;Yud&quot; para callarlo y darle una nueva orden
               </span>
             </div>
           ) : (
@@ -612,6 +663,16 @@ export default function AssistantPage() {
 
       {/* Action modal for email / calendar */}
       <ActionModal action={activeAction} onClose={() => setActiveAction(null)} />
+
+      {/* Memory management modal */}
+      <MemoryModal
+        isOpen={showMemoryModal}
+        onClose={() => setShowMemoryModal(false)}
+        memories={permanentMemories}
+        onAddMemory={handleAddPermanentMemory}
+        onDeleteMemory={handleDeletePermanentMemory}
+        onClearAll={handleClearAllPermanentMemories}
+      />
     </main>
   );
 }

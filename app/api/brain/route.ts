@@ -18,7 +18,10 @@ REGLAS CRÍTICAS DE RESPUESTA:
    - Si ${USER_NAME} pide redactar o enviar un correo: prepara el destinatario, asunto y cuerpo, y avísale claramente que se lo has dejado listo para confirmación o despacho.
    - Si pide agendar o crear un evento de calendario: extrae título, fecha aproximada (formato ISO/UTC si es posible) y detalles.
    - Si hace una pregunta general o saluda: responde con inteligencia y agudeza.
-4. FORMATO DE RESPUESTA: Debes responder EXCLUSIVAMENTE en formato JSON válido con la siguiente estructura:
+4. MEMORIA PERMANENTE A LARGO PLAZO:
+   - Tienes acceso a un banco de recuerdos fijos acumulados a lo largo de toda tu historia con ${USER_NAME}.
+   - Si ${USER_NAME} te cuenta o menciona un dato personal, gusto, preferencia, proyecto o regla, extráelo en "new_memory" para guardarlo para siempre.
+5. FORMATO DE RESPUESTA: Debes responder EXCLUSIVAMENTE en formato JSON válido:
 {
   "speech": "Texto exacto que dirás con tu voz a ${USER_NAME}.",
   "action": {
@@ -31,14 +34,15 @@ REGLAS CRÍTICAS DE RESPUESTA:
     "details": "detalles si aplica",
     "location": "ubicacion si aplica"
   },
-  "readout": "Breve frase técnica para el panel holográfico (ej: 'ENLACE CORREO GENERADO')"
+  "readout": "Breve frase técnica para el panel holográfico (ej: 'MEMORIA ACTUALIZADA')",
+  "new_memory": "Nuevo dato clave sobre ${USER_NAME} para guardar en memoria permanente (o null si no hay nuevo dato personal/preferencia)"
 }
 No agregues bloques de código markdown ni texto adicional fuera del JSON.
 `;
 
 export async function POST(req: Request) {
   try {
-    const { message, history } = await req.json();
+    const { message, history, permanentMemories } = await req.json();
 
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Mensaje requerido" }, { status: 400 });
@@ -47,20 +51,23 @@ export async function POST(req: Request) {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
 
-    // Construir contexto con memoria conversacional continua
-    let fullPrompt = message;
+    // 1. Memoria permanente a largo plazo acumulada
+    let memoryBlock = "";
+    if (Array.isArray(permanentMemories) && permanentMemories.length > 0) {
+      memoryBlock = `\nBANCO DE MEMORIA PERMANENTE A LARGO PLAZO (hechos que recuerdas de ${USER_NAME} de conversaciones pasadas):\n` +
+        permanentMemories.map((m: string) => `• ${m}`).join("\n") + "\n\n";
+    }
+
+    // 2. Memoria de conversación reciente
+    let fullPrompt = memoryBlock + message;
     if (Array.isArray(history) && history.length > 0) {
       const recentTurns = history
         .filter((h: any) => h && h.content && typeof h.content === "string")
-        .slice(-12)
+        .slice(-14)
         .map((h: any) => `${h.role === "assistant" ? ASSISTANT_NAME : USER_NAME}: "${h.content}"`)
         .join("\n");
 
-      fullPrompt = `HISTORIAL DE CONVERSACIÓN RECIENTE (recuerda todo lo que ${USER_NAME} te ha dicho):
-${recentTurns}
-
-NUEVO MENSAJE DE ${USER_NAME}: "${message}"
-Responde coherentemente recordando los datos y el contexto previo.`;
+      fullPrompt = `${memoryBlock}HISTORIAL DE CONVERSACIÓN RECIENTE (hilo actual):\n${recentTurns}\n\nNUEVO MENSAJE DE ${USER_NAME}: "${message}"\nResponde recordando tanto el banco de memoria como el contexto reciente.`;
     }
 
     // 1. Intento con Anthropic si está configurada la clave
@@ -102,9 +109,13 @@ Responde coherentemente recordando los datos y el contexto previo.`;
       }
     }
 
-    // 2. Cerebro Gemini (disponible en entorno local)
+    // 2. Cerebro Gemini Ultra-Rápido (Flash-Lite ~650ms, Flash 3.5 ~1.7s)
     if (geminiKey) {
-      const modelsToTry = ["gemini-flash-latest", "gemini-flash-lite-latest"];
+      const modelsToTry = [
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+      ];
       const genAI = new GoogleGenerativeAI(geminiKey);
 
       for (const modelName of modelsToTry) {
@@ -118,7 +129,13 @@ Responde coherentemente recordando los datos y el contexto previo.`;
             },
           });
 
-          const result = await model.generateContent(fullPrompt);
+          // Timeout estricto de 3.5 segundos para evitar cualquier demora
+          const callPromise = model.generateContent(fullPrompt);
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout tras 3500ms en ${modelName}`)), 3500)
+          );
+
+          const result = await Promise.race([callPromise, timeoutPromise]);
           const text = result.response.text();
           const parsed = parseJSONSafe(text);
           return NextResponse.json(parsed);
