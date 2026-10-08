@@ -1,15 +1,32 @@
 {
-  "name": "jarvis",
+  "name": "jude-assistant",
   "version": "1.0.0",
-  "description": "Just A Rather Very Intelligent System",
-  "main": "server.js",
-  "type": "module",
+  "description": "Jude (Yud) - Asistente Holográfico Inteligente de Alta Definición para Vaita",
   "scripts": {
-    "start": "node server.js"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "legacy:server": "node server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@google/generative-ai": "^0.21.0",
+    "clsx": "^2.1.1",
     "dotenv": "^16.4.5",
-    "express": "^4.21.0"
+    "framer-motion": "^11.18.2",
+    "lucide-react": "^0.475.0",
+    "next": "^14.2.24",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.1",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3"
   }
 }
