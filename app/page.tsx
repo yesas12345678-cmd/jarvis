@@ -12,17 +12,32 @@ import {
   AssistantState,
   ActionPayload,
 } from "@/lib/constants";
-import { Mic, MicOff, Send, Volume2, ShieldCheck, Sparkles, Terminal, RotateCcw } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Send,
+  Volume2,
+  ShieldCheck,
+  Sparkles,
+  Terminal,
+  RotateCcw,
+  Radio,
+} from "lucide-react";
+
+// Variantes fonéticas para activación por voz ("Yud", "Jude", "Hey Jude", etc.)
+const WAKE_WORD_REGEX =
+  /\b(jude|yud|llud|iud|yut|jud|yood|you\s*d|hey\s*jude|oye\s*jude|oye\s*yud|hey\s*yud)\b/i;
 
 export default function AssistantPage() {
   const [state, setState] = useState<AssistantState>("idle");
   const [transcript, setTranscript] = useState<string>("");
   const [lastReply, setLastReply] = useState<string>("");
-  const [readoutText, setReadoutText] = useState<string>("SISTEMAS SINCRONIZADOS");
+  const [readoutText, setReadoutText] = useState<string>("SISTEMAS SINCRONIZADOS // DI 'YUD'");
   const [inputText, setInputText] = useState<string>("");
   const [activeAction, setActiveAction] = useState<ActionPayload | null>(null);
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isHandsFree, setIsHandsFree] = useState<boolean>(true);
   const [history, setHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
 
   const recognitionRef = useRef<any>(null);
@@ -32,7 +47,20 @@ export default function AssistantPage() {
   const animationFrameRef = useRef<number | null>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Silenciar inmediatamente la voz de Jude para dar paso al usuario
+  const isHandsFreeRef = useRef<boolean>(true);
+  const stateRef = useRef<AssistantState>("idle");
+  const isAwaitingCommandRef = useRef<boolean>(false);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    isHandsFreeRef.current = isHandsFree;
+  }, [isHandsFree]);
+
+  // Silenciar inmediatamente la voz de Jude para dar paso a Vaita
   const stopSpeaking = () => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -73,54 +101,9 @@ export default function AssistantPage() {
     setReadoutText("MEMORIA REINICIADA // TABULA RASA");
   };
 
-  // Inicializar Web Speech Recognition
-  useEffect(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = LANGUAGE;
-
-      recognition.onstart = () => {
-        setIsRecording(true);
-        setState("listening");
-        setReadoutText("CAPTURA DE AUDIO ACTIVA");
-      };
-
-      recognition.onresult = (event: any) => {
-        let currentTranscript = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-        setTranscript(currentTranscript);
-      };
-
-      recognition.onerror = (err: any) => {
-        console.warn("[SPEECH_RECOGNITION_ERROR]", err);
-        stopAudioAnalysis();
-        setIsRecording(false);
-        setState("idle");
-        setReadoutText("LISTO // ESPERANDO COMANDO");
-      };
-
-      recognition.onend = () => {
-        setIsRecording(false);
-        stopAudioAnalysis();
-      };
-
-      recognitionRef.current = recognition;
-    }
-
-    return () => {
-      stopAudioAnalysis();
-    };
-  }, []);
-
   // Iniciar análisis de amplitud del micrófono
   const startAudioAnalysis = async () => {
+    if (audioContextRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
@@ -145,6 +128,7 @@ export default function AssistantPage() {
           sum += dataArray[i];
         }
         const avg = sum / bufferLength / 255;
+        // Si está en reposo solo leve movimiento, si está escuchando o hablando amplificar
         setAudioLevel(avg);
         animationFrameRef.current = requestAnimationFrame(checkLevel);
       };
@@ -170,37 +154,192 @@ export default function AssistantPage() {
     setAudioLevel(0);
   };
 
-  // Push to talk handlers
-  const handleStartPushToTalk = () => {
-    // Interrupción inmediata: Si Jude está hablando, callar la voz al instante
-    stopSpeaking();
+  // Inicializar Web Speech Recognition con soporte continuo para Wake Word
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = LANGUAGE;
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimText = "";
+        let finalText = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            finalText += item[0].transcript;
+          } else {
+            interimText += item[0].transcript;
+          }
+        }
+
+        const heardText = (finalText || interimText).trim();
+        if (!heardText) return;
+
+        // --- MODO MANOS LIBRES (WAKE WORD: "YUD" / "JUDE") ---
+        if (isHandsFreeRef.current) {
+          const lower = heardText.toLowerCase();
+          const wakeMatch = lower.match(WAKE_WORD_REGEX);
+
+          // 1. Interrupción si Jude está hablando y escucha "Yud" o su nombre
+          if (stateRef.current === "speaking" && wakeMatch) {
+            stopSpeaking();
+            stateRef.current = "listening";
+            setState("listening");
+          }
+
+          // 2. Activación desde reposo (idle)
+          if (stateRef.current === "idle" && wakeMatch) {
+            stopSpeaking();
+            setState("listening");
+            stateRef.current = "listening";
+            setReadoutText("NÚCLEO ACTIVADO // DI 'YUD'");
+
+            // Extraer lo que dijo después de "Yud" (ej: "Yud, qué hora es")
+            const commandAfter = heardText
+              .slice(wakeMatch.index! + wakeMatch[0].length)
+              .replace(/^[,.:;\s]+/, "")
+              .trim();
+
+            if (commandAfter.length > 2) {
+              setTranscript(commandAfter);
+              if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+              if (finalText) {
+                executeCommand(commandAfter);
+              } else {
+                silenceTimerRef.current = setTimeout(() => {
+                  executeCommand(commandAfter);
+                }, 1300);
+              }
+            } else {
+              // Solo dijo "Yud", esperar la orden
+              isAwaitingCommandRef.current = true;
+              setTranscript("");
+              setReadoutText("¿EN QUÉ PUEDO AYUDARLE, VAITA?");
+            }
+            return;
+          }
+
+          // 3. Captura de orden si ya estaba despierto
+          if (stateRef.current === "listening" || isAwaitingCommandRef.current) {
+            const cleanText = heardText
+              .replace(WAKE_WORD_REGEX, "")
+              .replace(/^[,.:;\s]+/, "")
+              .trim();
+
+            if (cleanText) {
+              setTranscript(cleanText);
+              if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+              if (finalText) {
+                isAwaitingCommandRef.current = false;
+                executeCommand(cleanText);
+              } else {
+                silenceTimerRef.current = setTimeout(() => {
+                  isAwaitingCommandRef.current = false;
+                  executeCommand(cleanText);
+                }, 1400);
+              }
+            }
+            return;
+          }
+        }
+
+        // Si no está en manos libres (modo Push to talk clásico)
+        setTranscript(heardText);
+      };
+
+      recognition.onerror = (err: any) => {
+        if (err.error !== "no-speech") {
+          console.warn("[SPEECH_RECOGNITION_ERROR]", err);
+        }
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        // Si manos libres está activo, reconectar automáticamente para no perder la palabra clave
+        if (isHandsFreeRef.current) {
+          setTimeout(() => {
+            if (isHandsFreeRef.current && recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch {}
+            }
+          }, 300);
+        }
+      };
+
+      recognitionRef.current = recognition;
+
+      // Iniciar reconocimiento automáticamente para escucha continua si manos libres está activo
+      try {
+        recognition.start();
+        startAudioAnalysis();
+      } catch {}
+    }
+
+    return () => {
+      stopAudioAnalysis();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+  }, []);
+
+  // Alternar entre Manos Libres ("Yud") y Push-to-Talk
+  const toggleHandsFree = () => {
+    const nextVal = !isHandsFree;
+    setIsHandsFree(nextVal);
+    isHandsFreeRef.current = nextVal;
+
+    if (nextVal) {
+      startAudioAnalysis();
+      try {
+        recognitionRef.current?.start();
+      } catch {}
+      setReadoutText("MANOS LIBRES ACTIVO // DI 'YUD'");
+    } else {
+      stopSpeaking();
+      recognitionRef.current?.stop();
+      setState("idle");
+      setReadoutText("MODO PUSH-TO-TALK LISTO");
+    }
+  };
+
+  // Push to talk manual
+  const handleStartPushToTalk = () => {
+    stopSpeaking();
     setTranscript("");
     startAudioAnalysis();
     try {
       recognitionRef.current?.start();
-    } catch {
-      // Ignorar si ya estaba iniciado
-    }
+    } catch {}
+    setState("listening");
+    stateRef.current = "listening";
   };
 
   const handleStopPushToTalk = () => {
-    if (!isRecording) return;
-    try {
-      recognitionRef.current?.stop();
-    } catch {}
-    stopAudioAnalysis();
-
-    if (transcript.trim()) {
+    if (transcript.trim() && !isHandsFree) {
       executeCommand(transcript.trim());
-    } else {
+    } else if (!isHandsFree) {
       setState("idle");
+      stateRef.current = "idle";
     }
   };
 
   // Procesar comando con el cerebro de Jude
   const executeCommand = async (command: string) => {
+    if (!command.trim()) return;
     setState("processing");
+    stateRef.current = "processing";
     setReadoutText("PROCESANDO INTENCIÓN");
 
     // Agregar turno de usuario
@@ -240,6 +379,7 @@ export default function AssistantPage() {
   // Síntesis de voz (ElevenLabs con fallback a navegador)
   const speakResponse = async (text: string) => {
     setState("speaking");
+    stateRef.current = "speaking";
     setReadoutText("SÍNTESIS ELEVENLABS EN CURSO");
 
     try {
@@ -263,8 +403,11 @@ export default function AssistantPage() {
             currentAudioRef.current = null;
           }
           setState("idle");
+          stateRef.current = "idle";
           setAudioLevel(0);
-          setReadoutText("STANDBY // NÚCLEO LISTO");
+          setReadoutText(
+            isHandsFree ? "STANDBY // ESCUCHANDO: DI 'YUD'..." : "STANDBY // NÚCLEO LISTO"
+          );
           URL.revokeObjectURL(audioUrl);
         };
         audio.onpause = () => {
@@ -291,19 +434,25 @@ export default function AssistantPage() {
   const playNativeBrowserSpeech = (text: string) => {
     if (!("speechSynthesis" in window)) {
       setState("idle");
+      stateRef.current = "idle";
       return;
     }
+    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = LANGUAGE;
     utterance.rate = 1.05;
     utterance.onstart = () => setAudioLevel(0.5);
     utterance.onend = () => {
       setState("idle");
+      stateRef.current = "idle";
       setAudioLevel(0);
-      setReadoutText("STANDBY // NÚCLEO LISTO");
+      setReadoutText(
+        isHandsFree ? "STANDBY // ESCUCHANDO: DI 'YUD'..." : "STANDBY // NÚCLEO LISTO"
+      );
     };
     utterance.onerror = () => {
       setState("idle");
+      stateRef.current = "idle";
       setAudioLevel(0);
     };
     window.speechSynthesis.speak(utterance);
@@ -333,24 +482,39 @@ export default function AssistantPage() {
           </h1>
         </div>
 
-        <div className="flex items-center gap-3 text-xs font-mono">
+        <div className="flex items-center gap-2 sm:gap-3 text-xs font-mono">
+          {/* Toggle Manos Libres ("Yud") vs Push-to-Talk */}
+          <button
+            onClick={toggleHandsFree}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all ${
+              isHandsFree
+                ? "bg-core-amber/15 border-core-amber text-core-amber shadow-hologram"
+                : "bg-panel border-neutral-800 text-neutral-400 hover:text-white"
+            }`}
+            title="Alternar entre activación por voz 'Yud' y pulsar para hablar"
+          >
+            <Radio className={`w-3 h-3 ${isHandsFree ? "animate-pulse" : ""}`} />
+            <span>{isHandsFree ? "WAKE WORD: 'YUD' ACTIVO" : "PUSH-TO-TALK"}</span>
+          </button>
+
           <button
             onClick={clearMemory}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 hover:border-core-amber/50 text-neutral-300 hover:text-white transition-colors"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 hover:border-core-amber/50 text-neutral-300 hover:text-white transition-colors"
             title="Reiniciar contexto de memoria"
           >
             <RotateCcw className="w-3 h-3 text-core-amber" />
-            <span>MEMORIA: <strong className="text-core-light">{history.length}</strong> {history.length === 1 ? "TURNO" : "TURNOS"}</span>
+            <span>
+              MEMORIA:{" "}
+              <strong className="text-core-light">{history.length}</strong>{" "}
+              {history.length === 1 ? "TURNO" : "TURNOS"}
+            </span>
           </button>
 
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 text-neutral-300">
+          <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 text-neutral-300">
             <ShieldCheck className="w-3.5 h-3.5 text-core-amber" />
-            <span>USUARIO: <strong className="text-white">{USER_NAME}</strong></span>
-          </div>
-
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-core-amber/10 border border-core-amber/30 text-core-amber">
-            <Sparkles className="w-3 h-3" />
-            <span className="text-[10px] tracking-widest font-semibold uppercase">Holograma Cuántico</span>
+            <span>
+              USUARIO: <strong className="text-white">{USER_NAME}</strong>
+            </span>
           </div>
         </div>
       </header>
@@ -361,42 +525,52 @@ export default function AssistantPage() {
           state={state}
           audioLevel={audioLevel}
           onClick={() => {
-            if (isRecording) {
-              handleStopPushToTalk();
+            startAudioAnalysis();
+            if (isHandsFree) {
+              setReadoutText("NÚCLEO EN ESCUCHA // DI 'YUD'");
             } else {
               handleStartPushToTalk();
             }
           }}
         />
 
-        {/* Push to talk interactive button */}
+        {/* Central status / action button */}
         <div className="mt-4 flex flex-col items-center gap-2">
-          <button
-            onMouseDown={handleStartPushToTalk}
-            onMouseUp={handleStopPushToTalk}
-            onTouchStart={handleStartPushToTalk}
-            onTouchEnd={handleStopPushToTalk}
-            className={`flex items-center gap-2.5 px-6 py-3 rounded-full font-mono text-xs font-semibold tracking-wider transition-all duration-300 shadow-hologram select-none active:scale-95 ${
-              isRecording
-                ? "bg-core-spark text-white ring-4 ring-core-spark/30 animate-pulse"
-                : "bg-core-amber hover:bg-core-amber/90 text-black"
-            }`}
-          >
-            {isRecording ? (
-              <>
-                <MicOff className="w-4 h-4" />
-                SOLTAR PARA ENVIAR
-              </>
-            ) : (
-              <>
-                <Mic className="w-4 h-4" />
-                MANTÉN PRESIONADO PARA HABLAR
-              </>
-            )}
-          </button>
-          <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">
-            O haz clic para alternar micrófono
-          </span>
+          {isHandsFree ? (
+            <div className="flex flex-col items-center gap-1.5">
+              <div className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-core-amber/10 border border-core-amber/40 text-core-amber font-mono text-xs font-semibold tracking-wider shadow-hologram animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-core-amber" />
+                <span>MANOS LIBRES ACTIVO · SOLO DI: &quot;YUD&quot;</span>
+              </div>
+              <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">
+                No necesitas pulsar nada · Di &quot;Yud, ¿qué hora es?&quot;
+              </span>
+            </div>
+          ) : (
+            <button
+              onMouseDown={handleStartPushToTalk}
+              onMouseUp={handleStopPushToTalk}
+              onTouchStart={handleStartPushToTalk}
+              onTouchEnd={handleStopPushToTalk}
+              className={`flex items-center gap-2.5 px-6 py-3 rounded-full font-mono text-xs font-semibold tracking-wider transition-all duration-300 shadow-hologram select-none active:scale-95 ${
+                state === "listening"
+                  ? "bg-core-spark text-white ring-4 ring-core-spark/30 animate-pulse"
+                  : "bg-core-amber hover:bg-core-amber/90 text-black"
+              }`}
+            >
+              {state === "listening" ? (
+                <>
+                  <MicOff className="w-4 h-4" />
+                  SOLTAR PARA ENVIAR
+                </>
+              ) : (
+                <>
+                  <Mic className="w-4 h-4" />
+                  MANTÉN PRESIONADO PARA HABLAR
+                </>
+              )}
+            </button>
+          )}
         </div>
       </section>
 
@@ -407,7 +581,8 @@ export default function AssistantPage() {
           readoutText={readoutText}
           transcript={transcript}
           lastReply={lastReply}
-          isPushToTalkActive={isRecording}
+          isPushToTalkActive={state === "listening"}
+          isHandsFree={isHandsFree}
         />
 
         {/* Text Input Fallback Bar */}
@@ -422,7 +597,7 @@ export default function AssistantPage() {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder={`Escribe una instrucción para ${ASSISTANT_NAME} (ej: "prepara un correo para el cliente", "crea un evento mañana")...`}
+            placeholder={`Escribe una instrucción para ${ASSISTANT_NAME} (o di en voz alta "Yud, prepara un correo...")...`}
             className="flex-1 bg-transparent py-2 px-2 text-sm text-neutral-200 placeholder:text-neutral-500 font-body focus:outline-none"
           />
           <button

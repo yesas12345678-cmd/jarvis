@@ -10,6 +10,7 @@ interface StatusReadoutProps {
   transcript: string;
   lastReply: string;
   isPushToTalkActive: boolean;
+  isHandsFree?: boolean;
 }
 
 export const StatusReadout: React.FC<StatusReadoutProps> = ({
@@ -18,17 +19,21 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
   transcript,
   lastReply,
   isPushToTalkActive,
+  isHandsFree = true,
 }) => {
   const getStatusBadge = () => {
     switch (state) {
       case "listening":
-        return { text: "ESCビCHANDO ENTRADA", color: "text-core-light border-core-amber bg-core-amber/10 animate-pulse" };
+        return { text: "ESCUCHANDO ENTRADA", color: "text-core-light border-core-amber bg-core-amber/10 animate-pulse" };
       case "processing":
         return { text: "CALCULANDO RESPUESTA", color: "text-core-orange border-core-orange bg-core-orange/15 animate-spin-slow" };
       case "speaking":
         return { text: "TRANSMITIENDO VOZ", color: "text-core-amber border-core-amber bg-core-amber/20" };
       default:
-        return { text: "STANDBY // NÚCLEO ACTIVO", color: "text-neutral-400 border-neutral-800 bg-neutral-950/60" };
+        return {
+          text: isHandsFree ? "STANDBY // ESCUCHA 'YUD' ACTIVA" : "STANDBY // PUSH-TO-TALK LISTO",
+          color: isHandsFree ? "text-core-amber border-core-amber/40 bg-core-amber/5" : "text-neutral-400 border-neutral-800 bg-neutral-950/60"
+        };
     }
   };
 
@@ -61,14 +66,22 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
               <Radio className="w-3 h-3" />
               Entrada de voz ({USER_NAME})
             </span>
-            <span>{isPushToTalkActive ? "MICRÓFONO EN VIVO" : "PUSH-TO-TALK LISTO"}</span>
+            <span>
+              {isHandsFree
+                ? "MANOS LIBRES ACTIVO (DI 'YUD')"
+                : isPushToTalkActive
+                ? "MICRÓFONO EN VIVO"
+                : "PUSH-TO-TALK LISTO"}
+            </span>
           </div>
           <p className="font-body text-sm text-neutral-200 min-h-[44px] flex items-center">
             {transcript ? (
               <span>&ldquo;{transcript}&rdquo;</span>
             ) : (
               <span className="text-neutral-500 italic">
-                Mantén presionado el botón central o presiona la barra espaciadora para hablar con {ASSISTANT_NAME}...
+                {isHandsFree
+                  ? `Di directamente: "Yud, ¿qué hora es?" o "Yud, prepara un correo..."`
+                  : `Mantén presionado el botón central o presiona la barra espaciadora para hablar con ${ASSISTANT_NAME}...`}
               </span>
             )}
           </p>
