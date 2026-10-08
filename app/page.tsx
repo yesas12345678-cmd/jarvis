@@ -30,6 +30,20 @@ export default function AssistantPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Silenciar inmediatamente la voz de Jude para dar paso al usuario
+  const stopSpeaking = () => {
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setAudioLevel(0);
+  };
 
   // Cargar memoria previa desde almacenamiento local
   useEffect(() => {
@@ -158,7 +172,9 @@ export default function AssistantPage() {
 
   // Push to talk handlers
   const handleStartPushToTalk = () => {
-    if (state === "processing" || state === "speaking") return;
+    // Interrupción inmediata: Si Jude está hablando, callar la voz al instante
+    stopSpeaking();
+
     setTranscript("");
     startAudioAnalysis();
     try {
@@ -237,17 +253,27 @@ export default function AssistantPage() {
         const blob = await res.blob();
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
+        currentAudioRef.current = audio;
 
         audio.onplay = () => {
           setAudioLevel(0.65);
         };
         audio.onended = () => {
+          if (currentAudioRef.current === audio) {
+            currentAudioRef.current = null;
+          }
           setState("idle");
           setAudioLevel(0);
           setReadoutText("STANDBY // NÚCLEO LISTO");
           URL.revokeObjectURL(audioUrl);
         };
+        audio.onpause = () => {
+          setAudioLevel(0);
+        };
         audio.onerror = () => {
+          if (currentAudioRef.current === audio) {
+            currentAudioRef.current = null;
+          }
           playNativeBrowserSpeech(text);
         };
 
@@ -286,6 +312,7 @@ export default function AssistantPage() {
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
+    stopSpeaking();
     const msg = inputText.trim();
     setInputText("");
     setTranscript(msg);
