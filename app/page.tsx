@@ -12,7 +12,7 @@ import {
   AssistantState,
   ActionPayload,
 } from "@/lib/constants";
-import { Mic, MicOff, Send, Volume2, ShieldCheck, Sparkles, Terminal } from "lucide-react";
+import { Mic, MicOff, Send, Volume2, ShieldCheck, Sparkles, Terminal, RotateCcw } from "lucide-react";
 
 export default function AssistantPage() {
   const [state, setState] = useState<AssistantState>("idle");
@@ -23,12 +23,41 @@ export default function AssistantPage() {
   const [activeAction, setActiveAction] = useState<ActionPayload | null>(null);
   const [audioLevel, setAudioLevel] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [history, setHistory] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
 
   const recognitionRef = useRef<any>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+
+  // Cargar memoria previa desde almacenamiento local
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("jude_memory");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setHistory(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+
+  const saveHistory = (newHistory: Array<{ role: "user" | "assistant"; content: string }>) => {
+    setHistory(newHistory);
+    try {
+      localStorage.setItem("jude_memory", JSON.stringify(newHistory.slice(-20)));
+    } catch {}
+  };
+
+  const clearMemory = () => {
+    setHistory([]);
+    try {
+      localStorage.removeItem("jude_memory");
+    } catch {}
+    setReadoutText("MEMORIA REINICIADA // TABULA RASA");
+  };
 
   // Inicializar Web Speech Recognition
   useEffect(() => {
@@ -158,17 +187,24 @@ export default function AssistantPage() {
     setState("processing");
     setReadoutText("PROCESANDO INTENCIÓN");
 
+    // Agregar turno de usuario
+    const updatedHistory = [...history, { role: "user" as const, content: command }];
+    saveHistory(updatedHistory);
+
     try {
       const response = await fetch("/api/brain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: command }),
+        body: JSON.stringify({ message: command, history: updatedHistory }),
       });
 
       const data = await response.json();
       const replyText = data.speech || `A tu orden, ${USER_NAME}.`;
       setLastReply(replyText);
       setReadoutText(data.readout || "RESPUESTA SINTETIZADA");
+
+      // Guardar turno del asistente en la memoria
+      saveHistory([...updatedHistory, { role: "assistant" as const, content: replyText }]);
 
       // Si hay acción asociada (email o calendar)
       if (data.action && data.action.type !== "none") {
@@ -271,9 +307,18 @@ export default function AssistantPage() {
         </div>
 
         <div className="flex items-center gap-3 text-xs font-mono">
+          <button
+            onClick={clearMemory}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 hover:border-core-amber/50 text-neutral-300 hover:text-white transition-colors"
+            title="Reiniciar contexto de memoria"
+          >
+            <RotateCcw className="w-3 h-3 text-core-amber" />
+            <span>MEMORIA: <strong className="text-core-light">{history.length}</strong> {history.length === 1 ? "TURNO" : "TURNOS"}</span>
+          </button>
+
           <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-panel border border-core-amber/20 text-neutral-300">
             <ShieldCheck className="w-3.5 h-3.5 text-core-amber" />
-            <span>USUARIO AUTORIZADO: <strong className="text-white">{USER_NAME}</strong></span>
+            <span>USUARIO: <strong className="text-white">{USER_NAME}</strong></span>
           </div>
 
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-core-amber/10 border border-core-amber/30 text-core-amber">

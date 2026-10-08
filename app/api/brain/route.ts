@@ -47,9 +47,35 @@ export async function POST(req: Request) {
     const anthropicKey = process.env.ANTHROPIC_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
 
+    // Construir contexto con memoria conversacional continua
+    let fullPrompt = message;
+    if (Array.isArray(history) && history.length > 0) {
+      const recentTurns = history
+        .filter((h: any) => h && h.content && typeof h.content === "string")
+        .slice(-12)
+        .map((h: any) => `${h.role === "assistant" ? ASSISTANT_NAME : USER_NAME}: "${h.content}"`)
+        .join("\n");
+
+      fullPrompt = `HISTORIAL DE CONVERSACIÓN RECIENTE (recuerda todo lo que ${USER_NAME} te ha dicho):
+${recentTurns}
+
+NUEVO MENSAJE DE ${USER_NAME}: "${message}"
+Responde coherentemente recordando los datos y el contexto previo.`;
+    }
+
     // 1. Intento con Anthropic si está configurada la clave
     if (anthropicKey) {
       try {
+        const anthropicMessages = [
+          ...(Array.isArray(history)
+            ? history.slice(-12).map((h: any) => ({
+                role: h.role === "assistant" ? "assistant" : "user",
+                content: h.content,
+              }))
+            : []),
+          { role: "user", content: message },
+        ];
+
         const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -61,7 +87,7 @@ export async function POST(req: Request) {
             model: "claude-3-5-sonnet-20241022",
             max_tokens: 350,
             system: SYSTEM_PROMPT,
-            messages: [{ role: "user", content: message }],
+            messages: anthropicMessages,
           }),
         });
 
@@ -92,7 +118,7 @@ export async function POST(req: Request) {
             },
           });
 
-          const result = await model.generateContent(message);
+          const result = await model.generateContent(fullPrompt);
           const text = result.response.text();
           const parsed = parseJSONSafe(text);
           return NextResponse.json(parsed);
