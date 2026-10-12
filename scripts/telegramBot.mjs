@@ -46,16 +46,75 @@ if (!fs.existsSync(CHAT_HISTORY_FILE)) fs.writeFileSync(CHAT_HISTORY_FILE, "{}",
 if (!fs.existsSync(ARCHIVE_FILE)) fs.writeFileSync(ARCHIVE_FILE, "[]", "utf-8");
 
 // ==========================================
-// INTEGRACIÓN CON COMPOSIO (@composio/core)
+// INTEGRACIÓN DINÁMICA CON COMPOSIO (@composio/core)
 // ==========================================
 let composio = null;
 let composioSession = null;
 let composioUserId = null;
-let connectedAppsStatus = {
-  gmail: { active: false, email: null },
-  calendar: { active: false },
-  github: { active: false },
+
+const TOOLKIT_METADATA = {
+  gmail: { name: "Gmail", icon: "📧", desc: "Gestión, lectura y envío de correos" },
+  googlecalendar: { name: "Google Calendar", icon: "📅", desc: "Agenda, citas y eventos" },
+  googledrive: { name: "Google Drive", icon: "📁", desc: "Almacenamiento y documentos en la nube" },
+  googledocs: { name: "Google Docs", icon: "📄", desc: "Creación y edición de documentos" },
+  googlesheets: { name: "Google Sheets", icon: "📊", desc: "Hojas de cálculo y tablas" },
+  youtube: { name: "YouTube", icon: "📺", desc: "Búsqueda de videos, playlists y canal" },
+  notion: { name: "Notion", icon: "📓", desc: "Páginas, notas y bases de conocimiento" },
+  perplexityai: { name: "Perplexity AI", icon: "🔍", desc: "Búsqueda web avanzada e investigación" },
+  supabase: { name: "Supabase", icon: "🗄️", desc: "Base de datos y backend relacional" },
+  github: { name: "GitHub", icon: "🐙", desc: "Repositorios, ramas, issues y commits" },
 };
+
+let activeAppsList = [];
+let lastSyncTime = 0;
+let primaryGmailAddress = null;
+
+async function syncConnectedApps(force = false) {
+  if (!composio) return activeAppsList;
+  const now = Date.now();
+  if (!force && now - lastSyncTime < 25000 && activeAppsList.length > 0) {
+    return activeAppsList;
+  }
+
+  try {
+    const accounts = await composio.client.connectedAccounts.list();
+    const seen = new Set();
+    const list = [];
+
+    if (accounts && accounts.items) {
+      for (const acc of accounts.items) {
+        if (acc.status === "ACTIVE") {
+          if (!composioUserId) composioUserId = acc.user_id;
+          const slug = acc.toolkit?.slug?.toLowerCase() || "";
+
+          if (slug && !seen.has(slug)) {
+            seen.add(slug);
+            const meta = TOOLKIT_METADATA[slug] || {
+              name: acc.toolkit?.name || slug.toUpperCase(),
+              icon: "⚡",
+              desc: "Servicio conectado",
+            };
+
+            list.push({
+              slug,
+              name: meta.name,
+              icon: meta.icon,
+              desc: meta.desc,
+              detail: slug === "gmail" ? primaryGmailAddress : null,
+            });
+          }
+        }
+      }
+    }
+
+    activeAppsList = list;
+    lastSyncTime = now;
+  } catch (err) {
+    console.warn("⚠️  [COMPOSIO] Error sincronizando apps activas:", err.message);
+  }
+
+  return activeAppsList;
+}
 
 async function initComposio() {
   if (!COMPOSIO_API_KEY) {
@@ -67,81 +126,61 @@ async function initComposio() {
     const { Composio } = await import("@composio/core");
     composio = new Composio({ apiKey: COMPOSIO_API_KEY });
 
-    // Descubrir cuentas conectadas
-    const accounts = await composio.client.connectedAccounts.list();
-    if (accounts && accounts.items) {
-      for (const acc of accounts.items) {
-        if (acc.status === "ACTIVE") {
-          composioUserId = acc.user_id;
-          const toolkit = acc.toolkit?.slug?.toLowerCase() || "";
-          if (toolkit.includes("gmail")) {
-            connectedAppsStatus.gmail.active = true;
-          }
-          if (toolkit.includes("calendar")) {
-            connectedAppsStatus.calendar.active = true;
-          }
-          if (toolkit.includes("github")) {
-            connectedAppsStatus.github.active = true;
-          }
-        }
-      }
-    }
+    // Sincronizar cuentas
+    await syncConnectedApps(true);
 
     if (!composioUserId) {
-      composioUserId = "7777389793";
+      composioUserId = "pg-test-10ba854f-9c9f-4d58-bd34-57888a816003";
     }
 
     composioSession = await composio.create(composioUserId);
 
-    // Obtener detalles del perfil de Gmail si está activo
-    if (connectedAppsStatus.gmail.active) {
+    // Obtener correo primario de Gmail si está activo
+    const hasGmail = activeAppsList.some((a) => a.slug === "gmail");
+    if (hasGmail) {
       try {
         const profile = await composioSession.execute("GMAIL_GET_PROFILE", {});
         if (profile?.data?.emailAddress) {
-          connectedAppsStatus.gmail.email = profile.data.emailAddress;
+          primaryGmailAddress = profile.data.emailAddress;
+          const gIndex = activeAppsList.findIndex((a) => a.slug === "gmail");
+          if (gIndex !== -1) {
+            activeAppsList[gIndex].detail = primaryGmailAddress;
+          }
         }
       } catch {}
     }
 
     console.log("⚡ [COMPOSIO] Sesión iniciada con éxito.");
     console.log(`   Usuario: ${composioUserId}`);
-    console.log(`   Gmail: ${connectedAppsStatus.gmail.active ? `ACTIVO (${connectedAppsStatus.gmail.email || "conectado"})` : "Inactivo"}`);
-    console.log(`   Calendario: ${connectedAppsStatus.calendar.active ? "ACTIVO" : "Inactivo"}`);
-    console.log(`   GitHub: ${connectedAppsStatus.github.active ? "ACTIVO" : "Inactivo"}`);
+    console.log(`   Integraciones activas (${activeAppsList.length}):`);
+    for (const a of activeAppsList) {
+      console.log(`   • ${a.icon} ${a.name} (${a.desc}${a.detail ? `: ${a.detail}` : ""})`);
+    }
   } catch (err) {
     console.warn("⚠️  [COMPOSIO] Error inicializando SDK:", err.message);
   }
 }
 
-// Ejecución de herramientas Composio
+// Helpers de ejecución
 async function executeSendEmail(recipient, subject, body) {
-  if (!composioSession || !connectedAppsStatus.gmail.active) {
-    throw new Error("Gmail no está conectado o autorizado en Composio.");
-  }
-  const res = await composioSession.execute("GMAIL_SEND_EMAIL", {
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+  return await composioSession.execute("GMAIL_SEND_EMAIL", {
     recipient_email: recipient,
     subject: subject || "Mensaje de Manuel",
     body: body || "",
   });
-  return res;
 }
 
 async function executeFetchEmails(maxResults = 5, query = "") {
-  if (!composioSession || !connectedAppsStatus.gmail.active) {
-    throw new Error("Gmail no está conectado o autorizado en Composio.");
-  }
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
   const params = { max_results: maxResults };
   if (query) params.query = query;
-  const res = await composioSession.execute("GMAIL_FETCH_EMAILS", params);
-  return res;
+  return await composioSession.execute("GMAIL_FETCH_EMAILS", params);
 }
 
 async function executeListCalendars() {
-  if (!composioSession || !connectedAppsStatus.calendar.active) {
-    throw new Error("Google Calendar no está conectado en Composio.");
-  }
-  const res = await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
-  return res;
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+  return await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
 }
 
 // Helper para llamadas a Telegram
@@ -252,20 +291,14 @@ function saveHistory(chatId, history, lastUserMsg = null, lastAiReply = null) {
 
 // Inferencia con Gemini SDK
 async function askJudeBrain(userMessage, chatId, toolContext = "") {
+  await syncConnectedApps();
+
   const memories = getMemories();
   const history = getHistory(chatId);
 
-  const gmailInfo = connectedAppsStatus.gmail.active
-    ? `CONECTADO Y OPERATIVO (Cuenta: ${connectedAppsStatus.gmail.email || "Autorizada"})`
-    : "No conectado";
-
-  const calendarInfo = connectedAppsStatus.calendar.active
-    ? "CONECTADO Y OPERATIVO"
-    : "No conectado";
-
-  const githubInfo = connectedAppsStatus.github.active
-    ? "CONECTADO Y OPERATIVO"
-    : "No conectado";
+  const activeAppsSummary = activeAppsList.length > 0
+    ? activeAppsList.map((a, i) => `${i + 1}. ${a.icon} ${a.name} (${a.desc}${a.detail ? `: ${a.detail}` : ""})`).join("\n")
+    : "• Conexiones en proceso de inicialización.";
 
   const systemInstruction = `
 Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
@@ -276,10 +309,13 @@ PERSONALIDAD & TRATO:
 - Dirígete a él como Manuel o Vaita.
 - TIENES MEMORIA CONTINUA: Conoces perfectamente todo lo que te ha dicho previamente en este chat y tus respuestas anteriores.
 
-ESTADO DE HERRAMIENTAS REALES CONECTADAS (COMPOSIO):
-- Gmail: ${gmailInfo}
-- Google Calendar: ${calendarInfo}
-- GitHub: ${githubInfo}
+INTEGRACIONES REALES Y HERRAMIENTAS ACTIVAS CONECTADAS EN COMPOSIO (${activeAppsList.length} ACTIVAS):
+${activeAppsSummary}
+
+CONOCIMIENTO PLENO DE TUS HERRAMIENTAS:
+- Tienes acceso directo y activo a TODAS estas herramientas en tu sistema.
+- Si Manuel te pregunta qué herramientas o integraciones tienes conectadas, MENCIONA TODAS las que aparecen en la lista anterior (incluyendo YouTube, Google Docs, Drive, Perplexity AI, Supabase, Google Sheets, Notion, GitHub, Calendar, Gmail).
+- Nunca digas que solo tienes 2 o 3 si la lista tiene ${activeAppsList.length}. Conoces y dispones de todas ellas.
 
 REGLAS DE OPERACIÓN:
 1. Recuerda todos los datos personales que te diga Manuel.
@@ -289,7 +325,7 @@ REGLAS DE OPERACIÓN:
    - Si Manuel te ordena enviar un correo a alguien, extrae los parámetros e incluye al final: [ACCION_EMAIL: destinatario@correo.com | Asunto | Contenido].
    - Si te pide revisar o leer correos, incluye al final: [ACCION_LEER_EMAILS: max 5].
    - Si te pide revisar calendario, incluye al final: [ACCION_CALENDARIO].
-5. NUNCA digas que no tienes la API key de Composio configurada: YA LA TIENES y las integraciones están activas.
+5. NUNCA digas que te falta la API key de Composio: YA LA TIENES y las integraciones están activas en tiempo real.
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
@@ -414,7 +450,7 @@ async function startPolling() {
               `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
               `*Comandos disponibles:*\n` +
               `• Escríbeme cualquier orden o duda normalmente.\n` +
-              `• \`/herramientas\` — Estado de Gmail, Calendario y GitHub.\n` +
+              `• \`/herramientas\` — Ver todas las integraciones activas (${activeAppsList.length}).\n` +
               `• \`/notas\` — Ver tus notas y recordatorios activos.\n` +
               `• \`/anotar <texto>\` — Guardar una nueva nota.\n` +
               `• \`/memoria\` — Consultar lo que recuerdo sobre ti.\n` +
@@ -425,14 +461,13 @@ async function startPolling() {
           }
 
           if (userText === "/herramientas") {
-            const statusMsg = `🛠️ *Estado de Herramientas de Jude (Composio)*:\n\n` +
-              `• *Gmail*: ${connectedAppsStatus.gmail.active ? `✅ Conectado (${connectedAppsStatus.gmail.email || "Activo"})` : "❌ Inactivo"}\n` +
-              `• *Google Calendar*: ${connectedAppsStatus.calendar.active ? "✅ Conectado" : "❌ Inactivo"}\n` +
-              `• *GitHub*: ${connectedAppsStatus.github.active ? "✅ Conectado" : "❌ Inactivo"}\n\n` +
-              `Puedes pedirme:\n` +
-              `- _"Mándale un correo a X con el mensaje Y"_\n` +
-              `- _"Mira mis correos recientes"_\n` +
-              `- _"Consulta mis calendarios"_`;
+            await syncConnectedApps(true);
+            const list = activeAppsList.length > 0
+              ? activeAppsList.map((a, i) => `${i + 1}. ${a.icon} *${a.name}* — ${a.desc}${a.detail ? ` (\`${a.detail}\`)` : ""}`).join("\n")
+              : "No se detectaron integraciones activas en este momento.";
+
+            const statusMsg = `🛠️ *Integraciones activas de Jude en Composio (${activeAppsList.length})*:\n\n${list}\n\n` +
+              `_Todas las herramientas están sincronizadas en vivo con tu cuenta de Composio y listas para usarse._`;
             await sendTextMessage(chatId, statusMsg);
             continue;
           }
@@ -477,7 +512,6 @@ async function startPolling() {
           // ATENCIÓN PROACTIVA A CORREOS O CALENDARIO PREVIO
           let toolContext = "";
 
-          // 1. Detectar si el usuario pide leer correos
           const lower = userText.toLowerCase();
           if (
             (lower.includes("correo") || lower.includes("email") || lower.includes("gmail")) &&
@@ -500,7 +534,6 @@ async function startPolling() {
             }
           }
 
-          // 2. Detectar si el usuario pide ver el calendario
           if (
             (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos")) &&
             (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("mis"))
