@@ -37,11 +37,25 @@ if (!fs.existsSync(DATA_DIR)) {
 const MEMORIES_FILE = path.join(DATA_DIR, "memories.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const CHAT_HISTORY_FILE = path.join(DATA_DIR, "chat_history.json");
+const ARCHIVE_FILE = path.join(DATA_DIR, "full_archive.json");
 
 // Inicializar archivos si no existen
 if (!fs.existsSync(MEMORIES_FILE)) fs.writeFileSync(MEMORIES_FILE, "[]", "utf-8");
 if (!fs.existsSync(NOTES_FILE)) fs.writeFileSync(NOTES_FILE, "[]", "utf-8");
 if (!fs.existsSync(CHAT_HISTORY_FILE)) fs.writeFileSync(CHAT_HISTORY_FILE, "{}", "utf-8");
+if (!fs.existsSync(ARCHIVE_FILE)) fs.writeFileSync(ARCHIVE_FILE, "[]", "utf-8");
+
+// Inicializar Composio si la clave existe
+let composioClient = null;
+if (COMPOSIO_API_KEY) {
+  try {
+    const { ComposioToolSet } = await import("composio-core");
+    composioClient = new ComposioToolSet({ apiKey: COMPOSIO_API_KEY });
+    console.log("⚡ [COMPOSIO] Herramientas conectadas correctamente.");
+  } catch (err) {
+    console.warn("⚠️  [COMPOSIO] Error inicializando Composio:", err.message);
+  }
+}
 
 // Helper para llamadas a Telegram
 async function callTelegram(method, params = {}) {
@@ -119,7 +133,7 @@ function getHistory(chatId) {
   return [];
 }
 
-function saveHistory(chatId, history) {
+function saveHistory(chatId, history, lastUserMsg = null, lastAiReply = null) {
   try {
     let data = {};
     if (fs.existsSync(CHAT_HISTORY_FILE)) {
@@ -127,8 +141,24 @@ function saveHistory(chatId, history) {
         data = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
       } catch {}
     }
-    data[String(chatId)] = history.slice(-30); // Guardar últimas 30 interacciones
+    data[String(chatId)] = history.slice(-50); // Guardar últimas 50 interacciones
     fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
+
+    // Guardar copia permanente acumulativa en el archivo histórico completo
+    if (lastUserMsg && lastAiReply) {
+      let archive = [];
+      if (fs.existsSync(ARCHIVE_FILE)) {
+        try {
+          archive = JSON.parse(fs.readFileSync(ARCHIVE_FILE, "utf-8"));
+        } catch {}
+      }
+      archive.push({
+        date: new Date().toISOString(),
+        user: lastUserMsg,
+        assistant: lastAiReply,
+      });
+      fs.writeFileSync(ARCHIVE_FILE, JSON.stringify(archive, null, 2), "utf-8");
+    }
   } catch (err) {
     console.error("[STORAGE ERROR] Guardando historial:", err);
   }
@@ -345,7 +375,7 @@ async function startPolling() {
             const currentHistory = getHistory(chatId);
             currentHistory.push({ role: "user", content: userText });
             currentHistory.push({ role: "assistant", content: aiReply });
-            saveHistory(chatId, currentHistory);
+            saveHistory(chatId, currentHistory, userText, aiReply);
 
             // Enviar respuesta a Telegram
             await sendTextMessage(chatId, aiReply);
