@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { USER_NAME, ASSISTANT_NAME, CoreTheme } from "@/lib/constants";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dns from "dns";
