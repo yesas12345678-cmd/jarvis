@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Cargar variables de entorno
 dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID; // Opcional pero muy recomendado
+const ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const USER_NAME = "Vaita";
 const ASSISTANT_NAME = "Jude";
@@ -24,6 +25,7 @@ if (!GEMINI_API_KEY) {
   process.exit(1);
 }
 
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DATA_DIR = path.join(process.cwd(), "data");
 const MEMORIES_FILE = path.join(DATA_DIR, "memories.json");
@@ -61,6 +63,7 @@ function saveMemory(text) {
     if (!current.includes(text.trim())) {
       const updated = [...current, text.trim()];
       fs.writeFileSync(MEMORIES_FILE, JSON.stringify(updated, null, 2), "utf-8");
+      console.log(`[MEMORIA] Nuevo dato guardado: "${text.trim()}"`);
     }
   } catch (err) {
     console.error("[STORAGE] Error guardando memoria:", err);
@@ -86,17 +89,12 @@ function addNote(text) {
     };
     const updated = [newNote, ...current];
     fs.writeFileSync(NOTES_FILE, JSON.stringify(updated, null, 2), "utf-8");
+    console.log(`[NOTAS] Nueva nota guardada: "${text.trim()}"`);
     return updated;
   } catch (err) {
     console.error("[STORAGE] Error añadiendo nota:", err);
     return [];
   }
-}
-
-function clearNotes() {
-  try {
-    fs.writeFileSync(NOTES_FILE, JSON.stringify([], null, 2), "utf-8");
-  } catch {}
 }
 
 function getHistory(chatId) {
@@ -122,25 +120,27 @@ function saveHistory(chatId, history) {
   }
 }
 
-// Inferencia de IA con Gemini para Telegram
+// Inferencia con Gemini SDK oficial
 async function askJudeBrain(userMessage, chatId) {
   const memories = getMemories();
   const history = getHistory(chatId);
 
   const systemInstruction = `
-Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de ${USER_NAME}.
+Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio de ${USER_NAME}.
 Te estás comunicando con ${USER_NAME} a través de su chat privado de Telegram mientras el ordenador está apagado o en remoto.
+
 Personalidad: Impecable, sofisticada, concisa, profesional y leal. Trata a ${USER_NAME} siempre con respeto y por su nombre.
-Reglas:
-1. Responde de forma directa y clara en texto.
-2. Sé conciso pero completo (evita párrafos excesivamente largos a menos que se te pida un informe detallado).
-3. Si ${USER_NAME} te pide anotar algo, añade al inicio o final un marcador especial: [NOTA: texto de la nota].
-4. Si ${USER_NAME} te revela un hecho personal o preferencia clave que deba recordarse para siempre, añade un marcador: [MEMORIA: dato a recordar].
+
+Capacidades en Telegram:
+1. Responde de forma directa, ágil y útil.
+2. Si te pide redactar un correo o mensaje (ej: para amigos, trabajo, etc.), redacta de inmediato el asunto y el cuerpo del correo con tono perfecto para que Vaita solo tenga que copiarlo y enviarlo.
+3. Si ${USER_NAME} te pide anotar algo o guardar una tarea, agrega la marca: [NOTA: texto de la nota].
+4. Si ${USER_NAME} te menciona un dato personal, preferencia o regla nueva que debas recordar siempre, agrega la marca: [MEMORIA: dato a recordar].
 5. Memorias permanentes que ya conoces de ${USER_NAME}:
 ${memories.length > 0 ? memories.map((m) => ` - ${m}`).join("\n") : " - Ninguna registrada aún."}
 `;
 
-  // Construir historial en formato Gemini
+  // Construir historial previo
   const contents = [];
   for (const h of history) {
     contents.push({
@@ -153,49 +153,48 @@ ${memories.length > 0 ? memories.map((m) => ` - ${m}`).join("\n") : " - Ninguna 
     parts: [{ text: userMessage }],
   });
 
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents,
-      systemInstruction: { parts: [{ text: systemInstruction }] },
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 600,
-      },
-    }),
-  });
+  const availableModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
+  let lastError = null;
 
-  if (!response.ok) {
-    // Fallback a gemini-1.5-flash si gemini-2.5 no responde
-    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const fbRes = await fetch(fallbackUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents,
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-      }),
-    });
-    if (!fbRes.ok) {
-      throw new Error(`Error en API de Gemini: ${fbRes.statusText}`);
+  for (const modelName of availableModels) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 800,
+        },
+      });
+
+      const result = await model.generateContent({ contents });
+      const reply = result.response.text();
+      if (reply) return reply;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[GEMINI_WARN] Fallo con ${modelName}, intentando siguiente:`, err.message);
     }
-    const fbData = await fbRes.json();
-    return fbData.candidates?.[0]?.content?.parts?.[0]?.text || "Disculpe, Vaita. No pude procesar la respuesta.";
   }
 
-  const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || "Disculpe, Vaita. No pude procesar la respuesta.";
+  throw lastError || new Error("No se pudo obtener respuesta de Gemini");
 }
 
-// Envío de mensaje a Telegram con reintentos
+// Envío a Telegram con fallback automático a texto plano si falla Markdown
 async function sendTextMessage(chatId, text) {
-  return await callTelegram("sendMessage", {
+  const res = await callTelegram("sendMessage", {
     chat_id: chatId,
     text: text,
     parse_mode: "Markdown",
   });
+
+  // Si Telegram rechaza el formato Markdown por caracteres no escapados, enviar como texto plano
+  if (!res || !res.ok) {
+    return await callTelegram("sendMessage", {
+      chat_id: chatId,
+      text: text,
+    });
+  }
+  return res;
 }
 
 // Bucle principal de Long Polling
@@ -206,7 +205,7 @@ async function startPolling() {
   if (ALLOWED_USER_ID) {
     console.log(`   Seguridad: Restringido al ID de Telegram: ${ALLOWED_USER_ID}`);
   } else {
-    console.log(`   ⚠️  Seguridad: Abierto (configura TELEGRAM_ALLOWED_USER_ID en .env)`);
+    console.log(`   ℹ️  Seguridad: Abierto inicialmente.`);
   }
   console.log("=================================================");
 
@@ -230,9 +229,11 @@ async function startPolling() {
           const senderId = String(msg.from.id);
           const userText = msg.text.trim();
 
+          console.log(`[TELEGRAM] Mensaje recibido de ${msg.from.first_name || "Usuario"} (ID: ${senderId}): "${userText}"`);
+
           // Comprobación de seguridad
           if (ALLOWED_USER_ID && senderId !== String(ALLOWED_USER_ID)) {
-            console.warn(`[SEGURIDAD] Mensaje no autorizado de ${senderId} (${msg.from.username || "sin username"}): ${userText}`);
+            console.warn(`[SEGURIDAD] Rechazado mensaje de ${senderId}: ${userText}`);
             await sendTextMessage(
               chatId,
               `⛔ *Acceso Denegado*\n\nEste núcleo de inteligencia artificial pertenece exclusivamente a *${USER_NAME}*.`
@@ -240,15 +241,13 @@ async function startPolling() {
             continue;
           }
 
-          console.log(`[TELEGRAM] Mensaje de ${USER_NAME}: "${userText}"`);
-
           // Indicador de "escribiendo..." en Telegram
           callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
 
           // COMANDOS RÁPIDOS
           if (userText === "/start" || userText === "/ayuda") {
             const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
-              `Hola, *${USER_NAME}*. Estoy conectado a tu VPS y listo para responder a tus órdenes incluso con tu ordenador personal apagado.\n\n` +
+              `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador personal apagado.\n\n` +
               `*Comandos disponibles:*\n` +
               `• Escríbeme cualquier orden o duda normalmente.\n` +
               `• \`/notas\` — Ver tus notas y recordatorios activos.\n` +
@@ -301,13 +300,14 @@ async function startPolling() {
           try {
             let aiReply = await askJudeBrain(userText, chatId);
 
-            // Detectar notas y memorias automáticas en la respuesta
+            // Detectar notas automáticas
             const noteMatch = aiReply.match(/\[NOTA:\s*(.*?)\]/i);
             if (noteMatch) {
               addNote(noteMatch[1].trim());
               aiReply = aiReply.replace(noteMatch[0], "").trim();
             }
 
+            // Detectar memorias automáticas
             const memoryMatch = aiReply.match(/\[MEMORIA:\s*(.*?)\]/i);
             if (memoryMatch) {
               saveMemory(memoryMatch[1].trim());
