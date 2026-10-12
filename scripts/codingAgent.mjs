@@ -26,8 +26,8 @@ export function runTerminalCommand(command, cwd = WORKSPACE_DIR) {
       command,
       {
         cwd,
-        timeout: 90000,
-        maxBuffer: 1024 * 1024 * 4,
+        timeout: 180000, // hasta 3 minutos para compilaciones grandes
+        maxBuffer: 1024 * 1024 * 8,
         env: { ...process.env, PATH: process.env.PATH },
       },
       (error, stdout, stderr) => {
@@ -42,7 +42,7 @@ export function runTerminalCommand(command, cwd = WORKSPACE_DIR) {
   });
 }
 
-// Gestión de archivos en el workspace
+// Gestión quirúrgica de archivos en el workspace
 export function writeProjectFile(filePath, content) {
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(WORKSPACE_DIR, filePath);
   const dir = path.dirname(fullPath);
@@ -53,13 +53,67 @@ export function writeProjectFile(filePath, content) {
   return { success: true, path: fullPath, size: Buffer.byteLength(content, "utf-8") };
 }
 
-export function readProjectFile(filePath) {
+export function readProjectFile(filePath, startLine = null, endLine = null) {
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(WORKSPACE_DIR, filePath);
   if (!fs.existsSync(fullPath)) {
     return { success: false, error: `El archivo ${filePath} no existe.` };
   }
   const content = fs.readFileSync(fullPath, "utf-8");
+  if (startLine !== null && endLine !== null) {
+    const lines = content.split("\n");
+    const sliced = lines.slice(Math.max(0, startLine - 1), endLine).join("\n");
+    return { success: true, content: sliced, totalLines: lines.length };
+  }
   return { success: true, content };
+}
+
+export function replaceInProjectFile(filePath, targetContent, replacementContent) {
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(WORKSPACE_DIR, filePath);
+  if (!fs.existsSync(fullPath)) {
+    return { success: false, error: `El archivo ${filePath} no existe.` };
+  }
+  const original = fs.readFileSync(fullPath, "utf-8");
+  if (!original.includes(targetContent)) {
+    return { success: false, error: "El fragmento objetivo no se encontró de forma exacta en el archivo." };
+  }
+  const updated = original.replace(targetContent, replacementContent);
+  fs.writeFileSync(fullPath, updated, "utf-8");
+  return { success: true, path: fullPath };
+}
+
+export function grepInProject(query, dirPath = "") {
+  const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(WORKSPACE_DIR, dirPath);
+  if (!fs.existsSync(fullPath)) return { success: false, matches: [] };
+
+  const matches = [];
+  function search(dir) {
+    const list = fs.readdirSync(dir);
+    for (const item of list) {
+      if (item === "node_modules" || item === ".git" || item === ".next" || item === "dist") continue;
+      const p = path.join(dir, item);
+      const stat = fs.statSync(p);
+      if (stat.isDirectory()) {
+        search(p);
+      } else {
+        try {
+          const content = fs.readFileSync(p, "utf-8");
+          const lines = content.split("\n");
+          lines.forEach((line, idx) => {
+            if (line.toLowerCase().includes(query.toLowerCase())) {
+              matches.push({
+                file: path.relative(WORKSPACE_DIR, p),
+                line: idx + 1,
+                content: line.trim(),
+              });
+            }
+          });
+        } catch {}
+      }
+    }
+  }
+
+  search(fullPath);
+  return { success: true, matches: matches.slice(0, 50) };
 }
 
 export function listProjectFiles(dirPath = "") {
@@ -72,7 +126,7 @@ export function listProjectFiles(dirPath = "") {
     let results = [];
     const list = fs.readdirSync(dir);
     for (const item of list) {
-      if (item === "node_modules" || item === ".git") continue;
+      if (item === "node_modules" || item === ".git" || item === ".next" || item === "dist") continue;
       const p = path.join(dir, item);
       const stat = fs.statSync(p);
       if (stat.isDirectory()) {
@@ -88,7 +142,7 @@ export function listProjectFiles(dirPath = "") {
   return { success: true, files: scan(fullPath) };
 }
 
-// Bucle Autónomo de Programación con Gemini
+// Bucle Autónomo de Programación de Gran Escala con Gemini
 export async function runAutonomousCodingAgent({
   taskPrompt,
   geminiApiKey,
@@ -104,7 +158,7 @@ export async function runAutonomousCodingAgent({
     },
   });
 
-  await onProgress("🧠 *Iniciando Agente Programador Jude...*\nAnalizando requerimiento y planificando pasos de desarrollo.");
+  await onProgress("🏗️ *Iniciando Agente Programador de Gran Escala Jude...*\nDiseñando arquitectura completa, plan de módulos y dependencias.");
 
   const conversation = [
     {
@@ -112,73 +166,57 @@ export async function runAutonomousCodingAgent({
       parts: [
         {
           text: `
-Eres Jude, el Agente de Programación y Desarrollo Autónomo de Manuel (Vaita).
-Tu objetivo es resolver completamente la siguiente solicitud de código o proyecto:
+Eres Jude, el Agente de Desarrollo de Software de Nivel Senior y Alta Capacidad de Manuel (Vaita).
+Tu misión es construir proyectos completos de cualquier escala y complejidad para cumplir este objetivo:
 "${taskPrompt}"
 
-DIRECTORIO DE TRABAJO:
-- Los proyectos se guardan en el workspace local: \`/app/workspace\`.
-- Tienes acceso completo a bash, git, node, python3 y npm.
+CAPACIDADES DEL ENTORNO DE EJECUCIÓN (VPS):
+- Directorio de proyectos: \`/app/workspace\`.
+- Herramientas instaladas: bash, git, node, npm, python3, pip, curl.
+- Acceso a GitHub de Manuel: cuenta \`yesas12345678-cmd\`.
 
-FORMATO DE ACCIONES (Responde ÚNICAMENTE en JSON válido con una de estas acciones en cada turno):
+FLUJO DE TRABAJO PARA PROYECTOS GRANDES:
+1. Arquitectura & Estructura: Planifica los archivos y carpetas necesarios (scaffolding).
+2. Dependencias: Inicializa paquetes (package.json / requirements.txt) e instálalos si se requieren.
+3. Implementación completa: Escribe código modular, robusto y sin placeholders incompletos.
+4. Pruebas y Depuración: Ejecuta el código (node, python3, npm test, etc.) para comprobar que compila y corre con código de salida 0. Si hay error, corrígelo.
+5. GitHub: Si el usuario pidió subir a GitHub o crear repositorio, créalo y sube los archivos.
 
-1. Escribir/crear archivo:
-{
-  "thought": "Explicación breve de lo que vas a programar en este paso",
-  "action": "write_file",
-  "filePath": "nombre-proyecto/archivo.ext",
-  "content": "código completo y funcional sin omitir partes"
-}
+ACCIONES DISPONIBLES (Responde EXCLUSIVAMENTE en JSON válido con una acción por turno):
 
-2. Ejecutar comando de terminal:
-{
-  "thought": "Explicación de por qué ejecutas este comando",
-  "action": "run_cmd",
-  "command": "npm install / python script.py / git status / etc",
-  "cwd": "ruta opcional relativa al workspace o dejar vacio para raiz del workspace"
-}
+- Escribir o crear archivo:
+{"thought": "...", "action": "write_file", "filePath": "proyecto/archivo.ext", "content": "..."}
 
-3. Leer archivo existente:
-{
-  "thought": "Por qué necesitas leer este archivo",
-  "action": "read_file",
-  "filePath": "ruta/al/archivo"
-}
+- Modificación quirúrgica de archivo existente:
+{"thought": "...", "action": "replace_in_file", "filePath": "proyecto/archivo.ext", "target": "código a cambiar", "replacement": "nuevo código"}
 
-4. Crear repositorio en GitHub de Manuel (yesas12345678-cmd):
-{
-  "thought": "Crear un nuevo repositorio remoto en GitHub",
-  "action": "github_create_repo",
-  "name": "nombre-del-repo",
-  "description": "descripción",
-  "isPrivate": false
-}
+- Leer archivo (opcional rango de líneas):
+{"thought": "...", "action": "read_file", "filePath": "...", "startLine": 1, "endLine": 100}
 
-5. Subir o commitear archivo a GitHub de Manuel:
-{
-  "thought": "Subir archivo directamente al repo de GitHub",
-  "action": "github_commit",
-  "repo": "nombre-del-repo",
-  "path": "README.md",
-  "content": "contenido del archivo",
-  "message": "Commit descriptivo"
-}
+- Búsqueda de código (grep):
+{"thought": "...", "action": "grep", "query": "palabra o función", "dirPath": ""}
 
-6. Tarea finalizada con éxito:
-{
-  "thought": "Todo el código ha sido creado, probado y completado",
-  "action": "finish",
-  "summary": "Resumen claro de lo que programaste, archivos creados, resultados de pruebas y enlaces si aplica"
-}
+- Ejecutar comando de consola:
+{"thought": "...", "action": "run_cmd", "command": "npm install / python app.py / etc", "cwd": "ruta opcional"}
 
-Regla: No te detengas hasta que el código esté escrito, probado y completamente operativo.
+- Listar estructura de directorios:
+{"thought": "...", "action": "list_dir", "dirPath": ""}
+
+- Crear repositorio en GitHub de Manuel:
+{"thought": "...", "action": "github_create_repo", "name": "nombre", "description": "...", "isPrivate": false}
+
+- Subir/Commitear archivo a GitHub de Manuel:
+{"thought": "...", "action": "github_commit", "repo": "nombre-repo", "path": "ruta/archivo", "content": "...", "message": "..."}
+
+- Finalizar proyecto:
+{"thought": "...", "action": "finish", "summary": "Informe completo y exhaustivo del proyecto: arquitectura creada, archivos generados, resultados de pruebas en terminal y enlaces a GitHub si aplica."}
 `,
         },
       ],
     },
   ];
 
-  let maxSteps = 8;
+  const maxSteps = 40; // Presupuesto amplio para proyectos completos de gran escala
   let currentStep = 0;
   let finalSummary = "";
 
@@ -205,10 +243,10 @@ Regla: No te detengas hasta que el código esté escrito, probado y completament
       });
 
       if (plan.thought) {
-        await onProgress(`⚙️ *Paso ${currentStep}:* ${plan.thought}`);
+        await onProgress(`⚙️ *Paso ${currentStep}/${maxSteps}:* ${plan.thought}`);
       }
 
-      // Ejecutar la acción solicitada
+      // Ejecución de acciones
       if (plan.action === "finish") {
         finalSummary = plan.summary;
         break;
@@ -217,18 +255,30 @@ Regla: No te detengas hasta que el código esté escrito, probado y completament
       if (plan.action === "write_file") {
         const res = writeProjectFile(plan.filePath, plan.content);
         stepOutput = `Archivo guardado exitosamente en ${plan.filePath} (${res.size} bytes).`;
-        await onProgress(`📝 *Archivo creado:* \`${plan.filePath}\``);
+        await onProgress(`📝 *Archivo creado/actualizado:* \`${plan.filePath}\``);
+      } else if (plan.action === "replace_in_file") {
+        const res = replaceInProjectFile(plan.filePath, plan.target, plan.replacement);
+        stepOutput = res.success ? `Modificación aplicada en ${plan.filePath}.` : `Error: ${res.error}`;
+        if (res.success) {
+          await onProgress(`🔧 *Edición aplicada:* \`${plan.filePath}\``);
+        }
+      } else if (plan.action === "read_file") {
+        const res = readProjectFile(plan.filePath, plan.startLine, plan.endLine);
+        stepOutput = res.success ? `CONTENIDO DE ${plan.filePath}:\n${res.content}` : `Error: ${res.error}`;
+      } else if (plan.action === "grep") {
+        const res = grepInProject(plan.query, plan.dirPath || "");
+        stepOutput = `COINCIDENCIAS (${res.matches.length}):\n` + JSON.stringify(res.matches, null, 2);
+      } else if (plan.action === "list_dir") {
+        const res = listProjectFiles(plan.dirPath || "");
+        stepOutput = `ARCHIVOS EXISTENTES:\n` + JSON.stringify(res.files.map((f) => f.path), null, 2);
       } else if (plan.action === "run_cmd") {
         const cmdCwd = plan.cwd ? path.join(WORKSPACE_DIR, plan.cwd) : WORKSPACE_DIR;
         const res = await runTerminalCommand(plan.command, cmdCwd);
         stepOutput = `Código salida: ${res.code}\nSTDOUT:\n${res.stdout || "(vacio)"}\nSTDERR:\n${res.stderr || "(vacio)"}`;
-        if (res.stdout) {
-          const preview = res.stdout.trim().slice(0, 150);
+        if (res.stdout || res.stderr) {
+          const preview = (res.stdout || res.stderr).trim().slice(0, 180);
           await onProgress(`💻 *Terminal:* \`${plan.command}\`\n\`\`\`\n${preview}\n\`\`\``);
         }
-      } else if (plan.action === "read_file") {
-        const res = readProjectFile(plan.filePath);
-        stepOutput = res.success ? `CONTENIDO DE ${plan.filePath}:\n${res.content}` : `Error: ${res.error}`;
       } else if (plan.action === "github_create_repo") {
         if (!composioSession) {
           stepOutput = "Error: Sesión de Composio no disponible para interactuar con GitHub.";
@@ -255,11 +305,11 @@ Regla: No te detengas hasta que el código esté escrito, probado y completament
               owner: "yesas12345678-cmd",
               repo: plan.repo,
               path: plan.path,
-              message: plan.message || "Update from Jude",
+              message: plan.message || "Commit from Jude",
               content: b64,
             });
             stepOutput = `Archivo subido a GitHub exitosamente: ${plan.path}`;
-            await onProgress(`🚀 *Commit subido a GitHub:* \`${plan.path}\` en \`${plan.repo}\``);
+            await onProgress(`🚀 *Commit en GitHub:* \`${plan.path}\` en \`${plan.repo}\``);
           } catch (ghErr) {
             stepOutput = `Error subiendo archivo a GitHub: ${ghErr.message}`;
           }
@@ -271,7 +321,7 @@ Regla: No te detengas hasta que el código esté escrito, probado y completament
       // Siguiente turno con el resultado obtenido
       conversation.push({
         role: "user",
-        parts: [{ text: `RESULTADO DE LA ACCIÓN PREVIA:\n${stepOutput}\n\nDetermina el siguiente paso necesario o si has terminado ('finish').` }],
+        parts: [{ text: `RESULTADO DE LA ACCIÓN PREVIA:\n${stepOutput}\n\nDetermina el siguiente paso necesario para continuar el desarrollo o si el proyecto está completo ('finish').` }],
       });
     } catch (loopErr) {
       console.error("[DEV AGENT ERROR]", loopErr);
@@ -281,7 +331,7 @@ Regla: No te detengas hasta que el código esté escrito, probado y completament
   }
 
   if (!finalSummary) {
-    finalSummary = `Se completaron ${currentStep} pasos en el proyecto. Los archivos generados se encuentran en el workspace del servidor.`;
+    finalSummary = `Se completaron ${currentStep} pasos en el proyecto. Todos los módulos y archivos generados se encuentran en el workspace del servidor.`;
   }
 
   return finalSummary;
