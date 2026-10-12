@@ -447,12 +447,49 @@ async function startPolling() {
   console.log("=================================================");
 
   let offset = 0;
+  let wasPcOnline = null;
+  let pcOfflineSince = null;
+  let pcOfflineAlertSent = false;
 
   while (true) {
     try {
-      // Reenviar avances o tareas completadas desde el PC en casa a Telegram
+      // Supervisión de estado del PC (alertas automáticas de desconexión y reconexión)
       try {
         const pcState = await getPcStatus();
+
+        if (pcState.online) {
+          if (wasPcOnline === false) {
+            // El PC ha recuperado la conexión tras un corte o apagado
+            const reconnectMsg = `🟢 *¡Tu ordenador ha vuelto a conectarse con éxito!*\n\n` +
+              `• *Host:* \`${pcState.hostname}\`\n` +
+              `• *Estado:* Corriente y conexión restablecidas.\n` +
+              `• *Puente:* Listo para recibir órdenes y tareas de desarrollo.`;
+            await sendTextMessage(ALLOWED_USER_ID, reconnectMsg);
+          }
+          wasPcOnline = true;
+          pcOfflineSince = null;
+          pcOfflineAlertSent = false;
+        } else {
+          // PC sin señal
+          if (wasPcOnline === true) {
+            if (!pcOfflineSince) {
+              pcOfflineSince = Date.now();
+            } else if (Date.now() - pcOfflineSince > 75000 && !pcOfflineAlertSent) {
+              // Ha pasado más de 1 minuto sin recibir latido de vida del PC
+              const disconnectMsg = `⚠️ *[ALERTA DE DESCONEXIÓN]*\n\n` +
+                `Manuel, he dejado de recibir señal de tu ordenador en casa hace más de 1 minuto.\n\n` +
+                `• *Posibles causas:* Corte de luz/corriente eléctrica, caída de la red WiFi o apagado.\n` +
+                `• *Estado de Jude:* Mi núcleo en la nube sigue 100% activo y te avisaré de inmediato en cuanto vuelva la corriente y tu PC arranque.`;
+              await sendTextMessage(ALLOWED_USER_ID, disconnectMsg);
+              pcOfflineAlertSent = true;
+              wasPcOnline = false;
+            }
+          } else if (wasPcOnline === null) {
+            wasPcOnline = false;
+          }
+        }
+
+        // Reenviar avances o tareas completadas desde el PC en casa a Telegram
         if (pcState.unreadProgress && pcState.unreadProgress.length > 0) {
           for (const p of pcState.unreadProgress) {
             await sendTextMessage(ALLOWED_USER_ID, p.message);
@@ -466,7 +503,9 @@ async function startPolling() {
             );
           }
         }
-      } catch {}
+      } catch (monitorErr) {
+        console.warn("[PC_MONITOR_WARN]:", monitorErr.message);
+      }
       const updates = await callTelegram("getUpdates", {
         offset: offset,
         timeout: 25,
