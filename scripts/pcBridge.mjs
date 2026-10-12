@@ -45,10 +45,26 @@ async function sendTaskCompletion(taskId, summary) {
   } catch {}
 }
 
+let pendingPowerTimer = null;
+
 async function handleCommand(cmd) {
   console.log(`\n🔔 [ORDEN RECIBIDA DESDE TELEGRAM]:`, cmd);
 
-  // 1. Apagado del PC
+  // 1. Hibernación del PC (Guarda toda la sesión y ventanas abiertas sin cerrar nada)
+  if (cmd.action === "hibernate") {
+    const delay = parseInt(cmd.delaySeconds, 10) || 5;
+    console.log(`💤 [HIBERNANDO PC] Hibernación programada en ${delay} segundos (conservando sesión)...`);
+    if (pendingPowerTimer) clearTimeout(pendingPowerTimer);
+    pendingPowerTimer = setTimeout(async () => {
+      pendingPowerTimer = null;
+      console.log("💤 Ejecutando shutdown /h...");
+      const res = await executeSystemCommand(`shutdown /h`);
+      console.log("Resultado hibernate:", res);
+    }, delay * 1000);
+    return;
+  }
+
+  // 2. Apagado clásico del PC
   if (cmd.action === "shutdown") {
     const delay = parseInt(cmd.delaySeconds, 10) || 5;
     console.log(`🛑 [APAGANDO PC] Apagado programado en ${delay} segundos...`);
@@ -57,11 +73,16 @@ async function handleCommand(cmd) {
     return;
   }
 
-  // 2. Cancelación de apagado
-  if (cmd.action === "cancel_shutdown") {
-    console.log(`↩️ [CANCELANDO APAGADO] Cancelando apagado en curso...`);
+  // 3. Cancelación de apagado o hibernación
+  if (cmd.action === "cancel_shutdown" || cmd.action === "cancel_hibernate") {
+    console.log(`↩️ [CANCELANDO] Cancelando orden de apagado / hibernación en curso...`);
+    if (pendingPowerTimer) {
+      clearTimeout(pendingPowerTimer);
+      pendingPowerTimer = null;
+      console.log("Temporizador de hibernación cancelado.");
+    }
     const res = await executeSystemCommand(`shutdown /a`);
-    console.log("Resultado cancelar:", res);
+    console.log("Resultado cancelar shutdown:", res);
     return;
   }
 

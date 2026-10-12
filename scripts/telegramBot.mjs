@@ -519,10 +519,11 @@ async function startPolling() {
             const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
               `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
               `*Control de tu PC Remoto:*\n` +
-              `• \`/pc\` — Ver si tu ordenador está encendido o apagado ahora.\n` +
-              `• \`/apagar_pc\` — Apagar tu ordenador de inmediato.\n` +
-              `• \`/apagar_pc_en <min>\` — Programar apagado en X minutos (ej: \`/apagar_pc_en 30\`).\n` +
-              `• \`/cancelar_apagado\` — Cancelar cualquier apagado en curso.\n\n` +
+              `• \`/pc\` — Ver si tu ordenador está encendido o hibernando.\n` +
+              `• \`/hibernar\` o \`/apagar_pc\` — Hibernar de inmediato (conserva todas tus ventanas y apps sin cerrar nada).\n` +
+              `• \`/hibernar_en <min>\` — Programar hibernación en X minutos (ej: \`/hibernar_en 30\`).\n` +
+              `• \`/cancelar_apagado\` — Cancelar cualquier apagado o hibernación en curso.\n` +
+              `• \`/apagar_total\` — Apagado tradicional completo (cerrando programas).\n\n` +
               `*Desarrollo & Herramientas:*\n` +
               `• \`/programar <tarea>\` — Desarrollo de proyectos autónomo.\n` +
               `• \`/herramientas\` — Ver las ${activeAppsList.length} integraciones activas.\n` +
@@ -541,10 +542,10 @@ async function startPolling() {
                 `• *Host:* \`${pc.hostname}\`\n` +
                 `• *Conexión:* Activa (hace ${pc.secondsAgo || 1}s)\n` +
                 `• *Comandos pendientes:* ${pc.pendingCommands}\n\n` +
-                `_Puedes apagarlo escribiendo \`/apagar_pc\` o programar el apagado con \`/apagar_pc_en <minutos>\`._`;
+                `_Puedes hibernarlo con \`/hibernar\` o \`/apagar_pc\` (conserva todas tus ventanas y apps sin cerrar nada), o programarlo con \`/hibernar_en <minutos>\`._`;
               await sendTextMessage(chatId, msg);
             } else {
-              const msg = `🔴 *Tu ordenador está APAGADO*\n\n` +
+              const msg = `🔴 *Tu ordenador está APAGADO / HIBERNANDO*\n\n` +
                 `• *Última conexión:* ${pc.lastSeen ? new Date(pc.lastSeen).toLocaleTimeString("es-ES") : "Sin registro hoy"}\n\n` +
                 `_En el siguiente paso configuraremos el encendido remoto desde el móvil._`;
               await sendTextMessage(chatId, msg);
@@ -552,7 +553,37 @@ async function startPolling() {
             continue;
           }
 
-          if (userText === "/apagar_pc") {
+          if (userText === "/apagar_pc" || userText === "/hibernar" || userText === "/hibernar_pc") {
+            const pc = await getPcStatus();
+            if (!pc.online) {
+              await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO / HIBERNANDO*.`);
+            } else {
+              await sendPcCommand("hibernate", 10);
+              await sendTextMessage(
+                chatId,
+                `💤 *Orden de hibernación enviada a tu PC*\n\nTu ordenador entrará en *hibernación en 10 segundos*.\n\n✨ *No se cerrará nada:* Todo tu trabajo, pestañas, ventanas y editores quedarán guardados intactos.\nSi deseas cancelarlo, escribe rápidamente \`/cancelar_apagado\`.`
+              );
+            }
+            continue;
+          }
+
+          if (userText.startsWith("/apagar_pc_en ") || userText.startsWith("/hibernar_en ")) {
+            const minStr = userText.replace(/^\/(apagar_pc_en|hibernar_en)\s+/, "").trim();
+            const min = parseInt(minStr, 10);
+            if (isNaN(min) || min <= 0) {
+              await sendTextMessage(chatId, `⚠️ Indica un número de minutos válido. Ejemplo: \`/hibernar_en 30\``);
+            } else {
+              const sec = min * 60;
+              await sendPcCommand("hibernate", sec);
+              await sendTextMessage(
+                chatId,
+                `⏳ *Hibernación programada*\n\nTu ordenador hibernará automáticamente en *${min} minutos* (conservando todas tus ventanas abiertas).\nPara cancelarlo, escribe \`/cancelar_apagado\`.`
+              );
+            }
+            continue;
+          }
+
+          if (userText === "/apagar_total" || userText === "/apagar_completo") {
             const pc = await getPcStatus();
             if (!pc.online) {
               await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO*.`);
@@ -560,30 +591,15 @@ async function startPolling() {
               await sendPcCommand("shutdown", 10);
               await sendTextMessage(
                 chatId,
-                `🛑 *Orden de apagado enviada a tu PC*\n\nTu ordenador se apagará en *10 segundos*.\nSi deseas cancelarlo, escribe rápidamente \`/cancelar_apagado\`.`
+                `🛑 *Apagado completo enviado a tu PC*\n\nTu ordenador se apagará por completo (cerrando aplicaciones) en *10 segundos*.\nPara cancelar: \`/cancelar_apagado\`.`
               );
             }
             continue;
           }
 
-          if (userText.startsWith("/apagar_pc_en ")) {
-            const min = parseInt(userText.replace("/apagar_pc_en ", "").trim(), 10);
-            if (isNaN(min) || min <= 0) {
-              await sendTextMessage(chatId, `⚠️ Indica un número de minutos válido. Ejemplo: \`/apagar_pc_en 30\``);
-            } else {
-              const sec = min * 60;
-              await sendPcCommand("shutdown", sec);
-              await sendTextMessage(
-                chatId,
-                `⏳ *Apagado programado*\n\nTu ordenador se apagará automáticamente en *${min} minutos*.\nPara cancelarlo, escribe \`/cancelar_apagado\`.`
-              );
-            }
-            continue;
-          }
-
-          if (userText === "/cancelar_apagado") {
+          if (userText === "/cancelar_apagado" || userText === "/cancelar_hibernacion") {
             await sendPcCommand("cancel_shutdown");
-            await sendTextMessage(chatId, `✅ *Apagado cancelado con éxito.* Tu ordenador seguirá encendido.`);
+            await sendTextMessage(chatId, `✅ *Apagado / hibernación cancelada con éxito.* Tu ordenador seguirá activo.`);
             continue;
           }
 
