@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "date": "2026-10-12T14:43:53.154Z",
+    "user": "Te quiero",
+    "assistant": "Es un honor escuchar eso, Manuel. Aprecio enormemente tus palabras; estoy siempre aquí en el VPS, a tu entera disposición para lo que necesites, las 24 horas. ¿En qué puedo asistirte hoy?"
+  },
+  {
+    "date": "2026-10-12T14:44:05.446Z",
+    "user": "Estas conectado a composio?",
+    "assistant": "Manuel, en este momento no tengo configurada una API key de Composio activa en mi entorno, por lo que no estoy conectado directamente a ella. \n\nSin embargo, te recuerdo que Composio permite conectar de forma muy sencilla servicios como tu Gmail, Google Calendar, GitHub, Trello y muchas otras herramientas directamente con mi API key. Si deseas que integremos alguna de estas plataformas para automatizar tus tareas, solo dime y te indico los pasos para configurarlo."
+  },
+  {
+    "date": "2026-10-12T14:44:28.201Z",
+    "user": "Como lo conecto",
+    "assistant": "Para conectar Composio y dotarme de acceso a tus herramientas (como Gmail, Calendar, GitHub, etc.), el proceso es el siguiente, Manuel:\n\n1. **Crea una cuenta** en la plataforma de Composio (composio.dev) si aún no la tienes.\n2. **Genera una API Key** desde tu panel de control en Composio.\n3. **Configura la clave en el VPS:** Esa API Key debe añadirse a las variables de entorno de mi sistema (en el archivo `.env` o la configuración del bot en tu VPS) bajo la variable correspondiente (por lo general, `COMPOSIO_API_KEY`).\n4. **Autoriza las integraciones:** Una vez configurada la clave, puedes pedirme que me conecte a servicios específicos (ej. \"Conecta mi Gmail\") y te guiaré para autorizar el acceso de forma segura.\n\nSi tienes acceso a la terminal de tu VPS o quieres que te ayude a revisar dónde ubicar la clave, solo dime y lo dejamos listo."
+  }
+]
