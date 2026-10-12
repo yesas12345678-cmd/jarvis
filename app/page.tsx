@@ -8,6 +8,7 @@ import { MemoryModal } from "@/components/MemoryModal";
 import { TimerWidget, ActiveTimer } from "@/components/TimerWidget";
 import { NotesDrawer } from "@/components/NotesDrawer";
 import { ThemeSelector } from "@/components/ThemeSelector";
+import { DevCommandCenter } from "@/components/DevCommandCenter";
 import { soundEngine } from "@/lib/soundEngine";
 import {
   USER_NAME,
@@ -35,6 +36,8 @@ import {
   Wifi,
   Waves,
   Zap,
+  Code2,
+  LayoutDashboard,
 } from "lucide-react";
 
 // Variantes fonéticas amplias para activación ("Yud", "Jude", "Oye", etc.) y palabras de interrupción
@@ -59,6 +62,7 @@ export default function AssistantPage() {
   const [permanentMemories, setPermanentMemories] = useState<string[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
   const [activeTimer, setActiveTimer] = useState<ActiveTimer | null>(null);
+  const [viewMode, setViewMode] = useState<"assistant" | "dev">("assistant");
 
   // Modales
   const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
@@ -340,6 +344,9 @@ export default function AssistantPage() {
         cycleTheme();
       } else if (e.key === "h" || e.key === "H") {
         toggleHandsFree();
+      } else if (e.key === "d" || e.key === "D") {
+        setViewMode((prev) => (prev === "assistant" ? "dev" : "assistant"));
+        soundEngine.playBeep(520, 0.05);
       }
     };
 
@@ -819,6 +826,23 @@ export default function AssistantPage() {
             <span className="hidden sm:inline">MEMORIA ({permanentMemories.length})</span>
           </button>
 
+          {/* Toggle Centro de Control Web (Dev Hub) */}
+          <button
+            onClick={() => {
+              soundEngine.playBeep(520, 0.05);
+              setViewMode((prev) => (prev === "assistant" ? "dev" : "assistant"));
+            }}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition-all duration-300 flex items-center gap-1.5 shadow-sm ${
+              viewMode === "dev"
+                ? "bg-cyan-400 text-black border-cyan-300 shadow-[0_0_15px_#00d2ff]"
+                : "bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20"
+            }`}
+            title="Alternar Centro de Control Web (D)"
+          >
+            <Code2 className="w-3.5 h-3.5" />
+            <span>{viewMode === "dev" ? "NÚCLEO JUDE" : "DEV COMMAND CENTER"}</span>
+          </button>
+
           {/* Toggle Manos Libres */}
           <button
             onClick={toggleHandsFree}
@@ -841,56 +865,63 @@ export default function AssistantPage() {
         </div>
       </header>
 
-      {/* Núcleo Holográfico Central */}
-      <section className="relative my-auto flex flex-col items-center justify-center py-6">
-        <HolographicCore
-          state={state}
-          theme={theme}
-          audioLevel={audioLevel}
-          onClick={state === "speaking" ? stopSpeaking : handleStartPushToTalk}
-        />
+      {/* Vista de Centro de Control Web Centralizado o Núcleo Holográfico */}
+      {viewMode === "dev" ? (
+        <section className="relative my-6 w-full">
+          <DevCommandCenter accentColor={activePalette.primary} />
+        </section>
+      ) : (
+        /* Núcleo Holográfico Central */
+        <section className="relative my-auto flex flex-col items-center justify-center py-6">
+          <HolographicCore
+            state={state}
+            theme={theme}
+            audioLevel={audioLevel}
+            onClick={state === "speaking" ? stopSpeaking : handleStartPushToTalk}
+          />
 
-        {/* Indicador de Estado Flotante */}
-        <div className="mt-4 flex items-center gap-3">
-          <div
-            className="px-4 py-1.5 rounded-full border text-xs font-mono tracking-widest uppercase transition-all duration-300 flex items-center gap-2 backdrop-blur-md"
-            style={{
-              borderColor: activePalette.border,
-              backgroundColor: "rgba(10, 8, 6, 0.85)",
-              color: activePalette.primary,
-              boxShadow: state === "speaking" ? `0 0 20px ${activePalette.glow}` : "none",
-            }}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                state === "speaking" || state === "listening" ? "animate-ping" : ""
-              }`}
-              style={{ backgroundColor: activePalette.secondary }}
-            />
-            <span>
-              {state === "speaking"
-                ? "JUDE TRANSMITIENDO (CLIC PARA CORTAR)"
-                : state === "listening"
-                ? "ESCUCHANDO A VAITA..."
-                : state === "processing"
-                ? "PROCESANDO INTENCIÓN..."
-                : isHandsFree
-                ? "DI 'JUDE' O PULSA EL NÚCLEO"
-                : "PULSA Y MANTÉN PARA HABLAR"}
-            </span>
-          </div>
-
-          {state === "speaking" && (
-            <button
-              onClick={stopSpeaking}
-              className="p-1.5 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 transition-all text-xs"
-              title="Silenciar ahora (Esc)"
+          {/* Indicador de Estado Flotante */}
+          <div className="mt-4 flex items-center gap-3">
+            <div
+              className="px-4 py-1.5 rounded-full border text-xs font-mono tracking-widest uppercase transition-all duration-300 flex items-center gap-2 backdrop-blur-md"
+              style={{
+                borderColor: activePalette.border,
+                backgroundColor: "rgba(10, 8, 6, 0.85)",
+                color: activePalette.primary,
+                boxShadow: state === "speaking" ? `0 0 20px ${activePalette.glow}` : "none",
+              }}
             >
-              <VolumeX className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      </section>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  state === "speaking" || state === "listening" ? "animate-ping" : ""
+                }`}
+                style={{ backgroundColor: activePalette.secondary }}
+              />
+              <span>
+                {state === "speaking"
+                  ? "JUDE TRANSMITIENDO (CLIC PARA CORTAR)"
+                  : state === "listening"
+                  ? "ESCUCHANDO A VAITA..."
+                  : state === "processing"
+                  ? "PROCESANDO INTENCIÓN..."
+                  : isHandsFree
+                  ? "DI 'JUDE' O PULSA EL NÚCLEO"
+                  : "PULSA Y MANTÉN PARA HABLAR"}
+              </span>
+            </div>
+
+            {state === "speaking" && (
+              <button
+                onClick={stopSpeaking}
+                className="p-1.5 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 hover:bg-red-500/30 transition-all text-xs"
+                title="Silenciar ahora (Esc)"
+              >
+                <VolumeX className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Widget de Temporizador Flotante */}
       <TimerWidget
@@ -967,6 +998,7 @@ export default function AssistantPage() {
           <div className="flex items-center gap-3">
             <span className="hidden sm:inline">ATAJOS:</span>
             <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/10">Esc: Silenciar</span>
+            <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/10">D: Dev Hub</span>
             <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/10">M: Memoria</span>
             <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/10">T: Tareas</span>
             <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/10">C: Tema</span>

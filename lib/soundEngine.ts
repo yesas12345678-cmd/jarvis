@@ -138,6 +138,26 @@ class SoundEngine {
     } catch {}
   }
 
+  // Beep sutil de interacción y feedback de interfaz
+  playBeep(freq = 440, duration = 0.08) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.12, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + duration);
+    } catch {}
+  }
+
   // 5. Alarma de temporizador (aviso cíclico de alta tecnología)
   playTimerAlarm() {
     const ctx = this.getContext();
