@@ -26,7 +26,7 @@ export function runTerminalCommand(command, cwd = WORKSPACE_DIR) {
       command,
       {
         cwd,
-        timeout: 180000, // hasta 3 minutos para compilaciones grandes
+        timeout: 180000,
         maxBuffer: 1024 * 1024 * 8,
         env: { ...process.env, PATH: process.env.PATH },
       },
@@ -142,6 +142,41 @@ export function listProjectFiles(dirPath = "") {
   return { success: true, files: scan(fullPath) };
 }
 
+// Invocación a Gemini con reintentos exponenciales y cambio automático de modelo ante 503/429
+async function queryGeminiWithRetry(genAI, history, userMsg, retryCount = 0) {
+  const candidateModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
+  let lastError = null;
+
+  for (const modelName of candidateModels) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const chat = model.startChat({ history });
+      const res = await chat.sendMessage(userMsg);
+      const reply = res.response.text();
+      if (reply) return reply;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[GEMINI_DEV_WARN] Fallo temporal en ${modelName}:`, err.message);
+    }
+  }
+
+  // Si fallan ambos por sobrecarga temporal (503/429), reintentar hasta 3 veces
+  if (retryCount < 3) {
+    console.log(`[GEMINI_RETRY] Reintentando paso tras 503/429 en ${3 * (retryCount + 1)}s...`);
+    await new Promise((r) => setTimeout(r, 3000 * (retryCount + 1)));
+    return await queryGeminiWithRetry(genAI, history, userMsg, retryCount + 1);
+  }
+
+  throw lastError || new Error("No se pudo conectar con los modelos de Gemini tras varios reintentos.");
+}
+
 // Bucle Autónomo de Programación de Gran Escala con Gemini
 export async function runAutonomousCodingAgent({
   taskPrompt,
@@ -150,13 +185,6 @@ export async function runAutonomousCodingAgent({
   onProgress = async () => {},
 }) {
   const genAI = new GoogleGenerativeAI(geminiApiKey);
-  const model = genAI.getGenerativeModel({
-    model: "gemini-3.5-flash",
-    generationConfig: {
-      temperature: 0.2,
-      responseMimeType: "application/json",
-    },
-  });
 
   await onProgress("🏗️ *Iniciando Agente Programador de Gran Escala Jude...*\nDiseñando arquitectura completa, plan de módulos y dependencias.");
 
@@ -216,7 +244,7 @@ ACCIONES DISPONIBLES (Responde EXCLUSIVAMENTE en JSON válido con una acción po
     },
   ];
 
-  const maxSteps = 40; // Presupuesto amplio para proyectos completos de gran escala
+  const maxSteps = 40;
   let currentStep = 0;
   let finalSummary = "";
 
@@ -225,14 +253,15 @@ ACCIONES DISPONIBLES (Responde EXCLUSIVAMENTE en JSON válido con una acción po
     let stepOutput = null;
 
     try {
-      const chat = model.startChat({ history: conversation.slice(0, -1) });
-      const lastMsg = conversation[conversation.length - 1];
-      const result = await chat.sendMessage(lastMsg.parts[0].text);
-      const replyText = result.response.text();
+      const history = conversation.slice(0, -1);
+      const lastMsg = conversation[conversation.length - 1].parts[0].text;
+
+      const replyText = await queryGeminiWithRetry(genAI, history, lastMsg);
 
       let plan;
       try {
-        plan = JSON.parse(replyText);
+        const cleaned = replyText.replace(/```json/gi, "").replace(/```/g, "").trim();
+        plan = JSON.parse(cleaned);
       } catch (parseErr) {
         throw new Error(`Error interpretando JSON de acción: ${replyText}`);
       }
@@ -325,8 +354,9 @@ ACCIONES DISPONIBLES (Responde EXCLUSIVAMENTE en JSON válido con una acción po
       });
     } catch (loopErr) {
       console.error("[DEV AGENT ERROR]", loopErr);
-      await onProgress(`⚠️ *Incidencia en paso ${currentStep}:* ${loopErr.message}`);
-      break;
+      await onProgress(`⚠️ *Incidencia en paso ${currentStep}:* ${loopErr.message}\nReintentando o adaptando...`);
+      // Esperar brevemente antes de reintentar el paso
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
