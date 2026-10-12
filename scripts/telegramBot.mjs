@@ -192,6 +192,8 @@ async function executeFetchEmails(maxResults = 5, query = "") {
 async function executeListCalendars() {
   if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
   return await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
+}
+
 // Helpers de control remoto del PC
 async function getPcStatus() {
   try {
@@ -446,6 +448,7 @@ async function startPolling() {
 
   let offset = 0;
 
+  while (true) {
     try {
       // Reenviar avances o tareas completadas desde el PC en casa a Telegram
       try {
