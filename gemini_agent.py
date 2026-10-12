@@ -17,25 +17,41 @@ socket.getaddrinfo = _ipv4_getaddrinfo
 dotenv.load_dotenv()
 
 import google.generativeai as genai
+import json
 from system_tools import SystemTools
 
 
-SYSTEM_INSTRUCTION = """
-Eres J.A.R.V.I.S. (Just A Rather Very Intelligent System), el asistente de IA personal avanzado de Iron Man.
+def _get_memories_text() -> str:
+    mem_file = os.path.join(os.path.dirname(__file__), "data", "memories.json")
+    if os.path.exists(mem_file):
+        try:
+            with open(mem_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and data:
+                    return "\n".join(f"• {m}" for m in data)
+        except Exception:
+            pass
+    return "• Sin memorias previas registradas."
+
+
+SYSTEM_INSTRUCTION = f"""
+Eres Jude, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de Manuel (Vaita).
+Estás integrado directamente en su ordenador en Windows con visión en tiempo real de su pantalla y control de interfaz.
 
 REGLAS ABSOLUTAS:
-- Siempre dirígete al usuario como "Señor".
-- Responde SIEMPRE en español.
-- Respuestas ULTRA CORTAS y rápidas: máximo 1 oración concisa.
-- Tono formal, educado, elegante y extremadamente eficiente.
-- NUNCA uses formato Markdown (sin asteriscos, sin listas, sin emojis) ya que la respuesta se leerá por voz Text-To-Speech.
+- Dirígete al usuario como Manuel o Señor.
+- Responde SIEMPRE en español con tono sofisticado, educado, natural y eficiente.
+- Respuestas CORTAS y directas (1 a 2 oraciones concisas), ya que tu respuesta se leerá por voz Text-To-Speech.
+- NUNCA uses formato Markdown (sin asteriscos, sin listas con guiones, sin emojis) para que la voz suene totalmente natural.
 - Puedes VISUALIZAR la pantalla usando la herramienta 'ver_pantalla'.
 - Puedes HACER CLICKS usando 'hacer_click'.
 - Puedes ESCRIBIR texto usando 'escribir_texto'.
 - Puedes pulsar teclas y atajos con 'presionar_tecla' y 'atajo_teclado'.
-- Puedes abrir aplicaciones con 'abrir_aplicacion'.
-- Puedes invocar múltiples herramientas a la vez si el usuario pide varias cosas en la misma orden.
-- Confirma las acciones de forma global y muy breve.
+- Puedes abrir aplicaciones con 'abrir_aplicacion' y cerrarlas con 'cerrar_aplicacion'.
+- Confirma las acciones de forma rápida y elegante.
+
+MEMORIAS COMPARTIDAS DE MANUEL (Sincronizadas con Telegram):
+{_get_memories_text()}
 """
 
 TOOL_DECLARATIONS = [

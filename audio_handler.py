@@ -173,16 +173,19 @@ class AudioHandler:
         lower = text.lower()
         print(f"\n[AUDIO] Frase captada: \"{text}\"")
 
-        # Comprobar si menciono a Jarvis (o variantes foneticas habituales)
-        keywords = ["jarvis", "yarvis", "jarvi", "charvis", "harvis", "alvis", "arvis", "elvis", "yervis", "llarvis"]
+        # Comprobar si mencionó a Jude (o variantes fonéticas / Jarvis)
+        keywords = [
+            "jude", "hey jude", "oye jude", "chude", "yud", "yude", "yut", "llud", "llude", "djud", "djude",
+            "jarvis", "yarvis", "jarvi", "charvis", "harvis", "arvis"
+        ]
         for kw in keywords:
             if kw in lower:
                 # Separar el comando si vino todo en una sola frase
                 parts = lower.split(kw, 1)
                 remainder = parts[1].strip() if len(parts) > 1 else ""
-                # Limpiar caracteres tipicos al inicio del comando
+                # Limpiar caracteres típicos al inicio del comando
                 remainder = remainder.lstrip(",.:;!?- ")
-                return "jarvis_detected", remainder
+                return "jude_detected", remainder
 
         return None, None
 

@@ -18,8 +18,8 @@ from fast_router import FastRouter
 
 def main():
     print("=" * 62)
-    print("  J.A.R.V.I.S. - Just A Rather Very Intelligent System")
-    print("  Version 3.2 | Motor: Dual (Fast-Router 0ms + Gemini 2.5)")
+    print("  J U D E  - Asistente de Inteligencia Artificial Personal")
+    print("  Version 4.0 | Motor: Dual (Fast-Router 0ms + Gemini Multimodal)")
     print("=" * 62)
 
     if not os.environ.get("GEMINI_API_KEY"):
@@ -34,20 +34,20 @@ def main():
     router = FastRouter(agent._sys_tools)
 
     print("\n" + "=" * 62)
-    print("[JARVIS] SISTEMAS COMPLETAMENTE OPERATIVOS.")
-    print("[JARVIS] Puede decir directamente frases como:")
-    print("         - 'Jarvis, abre la calculadora' (Respuesta instantanea 0ms)")
-    print("         - 'Jarvis, abre spotify'")
-    print("         - 'Jarvis, qué hora es'")
-    print("         - 'Jarvis, ¿qué ves en mi pantalla?'")
-    print("[JARVIS] Presione Ctrl+C para salir.")
+    print("[JUDE] SISTEMAS COMPLETAMENTE OPERATIVOS.")
+    print("[JUDE] Puede decir directamente frases como:")
+    print("       - 'Jude, abre la calculadora' (Respuesta instantanea 0ms)")
+    print("       - 'Jude, abre spotify'")
+    print("       - 'Jude, qué hora es'")
+    print("       - 'Jude, ¿qué ves en mi pantalla?'")
+    print("[JUDE] Presione Ctrl+C para salir.")
     print("=" * 62 + "\n")
 
-    tts.speak("Sistemas en linea. J.A.R.V.I.S. a su servicio, Señor.")
+    tts.speak("Sistemas en línea. Jude a su servicio, Manuel.")
 
     def shutdown(sig=None, frame=None):
-        print("\n[JARVIS] Desconectando sistemas...")
-        tts.speak("Hasta luego, Señor.")
+        print("\n[JUDE] Desconectando sistemas...")
+        tts.speak("Hasta luego, Manuel.")
         audio.close()
         tts.close()
         sys.exit(0)
@@ -69,16 +69,16 @@ def main():
 
         # Palabras de cierre explícito
         if any(w in lower for w in ["adiós", "adios", "hasta luego", "descansa", "nada más", "nada mas", "apágate", "cierra sesión"]):
-            tts.speak("A su disposición, Señor.")
+            tts.speak("A su disposición, Manuel.")
             return False
 
         tts.speak_processing()
-        print(f"\n[JARVIS] Ejecutando: \"{clean}\"")
+        print(f"\n[JUDE] Ejecutando: \"{clean}\"")
 
         # 1. RUTA ULTRA-RAPIDA LOCAL (< 5ms local, 0ms latencia de red)
         fast_resp = router.try_execute(clean)
         if fast_resp:
-            print(f"[JARVIS][FAST-PATH] Accion resuelta de inmediato.")
+            print(f"[JUDE][FAST-PATH] Accion resuelta de inmediato.")
             tts.speak(fast_resp)
             return True
 
@@ -88,7 +88,7 @@ def main():
             tts.speak(gemini_resp)
             return True
         else:
-            print("[JARVIS] Sin respuesta del agente.")
+            print("[JUDE] Sin respuesta del agente.")
             return False
 
     while True:
@@ -97,13 +97,13 @@ def main():
             if status is None:
                 continue
 
-            # Si solo dijo "Jarvis" o "Oye Jarvis", dar acuse de recibo y esperar la orden
+            # Si solo dijo "Jude" o "Oye Jude", dar acuse de recibo y esperar la orden
             if not command:
                 tts.speak_activation()
-                print("\n[JARVIS] >>> ¿Qué desea ordenar, Señor? (hable ahora) <<<")
+                print("\n[JUDE] >>> Dígame, Manuel (hable ahora) <<<")
                 command = audio.record_followup(wait_seconds=5.0)
                 if not command:
-                    tts.speak("¿En qué puedo asistirle, Señor?")
+                    tts.speak("¿En qué puedo asistirle, Manuel?")
                     command = audio.record_followup(wait_seconds=6.0)
 
             if not command:
@@ -111,7 +111,7 @@ def main():
 
             # -------------------------------------------------------------
             # BUCLE DE CONVERSACION CONTINUA:
-            # Mientras el usuario siga hablando, NO necesita volver a decir "Jarvis"
+            # Mientras el usuario siga hablando, NO necesita volver a decir "Jude"
             # -------------------------------------------------------------
             current_cmd = command
             while current_cmd:
@@ -119,10 +119,10 @@ def main():
                 if not should_continue:
                     break
 
-                print("\n[JARVIS] [Conversacion Activa] Escuchando (hable sin decir Jarvis)...")
+                print("\n[JUDE] [Conversacion Activa] Escuchando (hable sin decir Jude)...")
                 current_cmd = audio.record_followup(wait_seconds=6.0)
 
-            print("\n[JARVIS] Modo reposo. Diga 'Jarvis' para una nueva orden.\n")
+            print("\n[JUDE] Modo reposo. Diga 'Jude' para una nueva orden.\n")
 
 
         except KeyboardInterrupt:
