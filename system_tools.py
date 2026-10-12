@@ -74,6 +74,9 @@ APP_COMMANDS = {
     "sklauncher": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
     "tlauncher": r"C:\Users\yesas\AppData\Roaming\.minecraft\TLauncher.exe",
     "minecraft": r"C:\Users\yesas\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\SKlauncher\SKlauncher.lnk",
+
+    "obsidian": r"C:\Users\yesas\AppData\Local\Programs\obsidian\Obsidian.exe",
+    "segundo cerebro": r"C:\Users\yesas\AppData\Local\Programs\obsidian\Obsidian.exe",
 }
 
 
