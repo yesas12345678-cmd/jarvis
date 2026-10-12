@@ -5,6 +5,7 @@ import { ActionPayload, USER_NAME, ASSISTANT_NAME } from "@/lib/constants";
 import { Mail, Calendar, CheckCircle2, X, ExternalLink, Zap } from "lucide-react";
 
 interface ActionModalProps {
+  isOpen?: boolean;
   action: ActionPayload | null;
   onClose: () => void;
 }
