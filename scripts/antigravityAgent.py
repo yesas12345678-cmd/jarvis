@@ -21,6 +21,7 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from google.antigravity import Agent, LocalAgentConfig, CapabilitiesConfig
+import google.antigravity.policy as ag_policy
 
 
 async def run_coding_task(task_prompt: str, working_dir: str):
@@ -47,6 +48,7 @@ REGLAS ESTRICTAS:
     config = LocalAgentConfig(
         system_instructions=system_instructions,
         capabilities=CapabilitiesConfig(),
+        policies=[ag_policy.allow_all()],
         workspaces=[abs_work_dir],
         api_key=api_key,
     )
