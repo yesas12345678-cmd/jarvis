@@ -455,22 +455,97 @@ async function startPolling() {
 
           callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
 
+// Helpers de control remoto del PC
+async function getPcStatus() {
+  try {
+    const res = await fetch("http://localhost:3001/api/pc-bridge");
+    if (res.ok) return await res.json();
+  } catch {}
+  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0 };
+}
+
+async function sendPcCommand(action, delaySeconds = 0) {
+  try {
+    const res = await fetch("http://localhost:3001/api/pc-bridge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "command", action, delaySeconds }),
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+  return null;
+}
+
           // COMANDOS RÁPIDOS
           if (userText === "/start" || userText === "/ayuda") {
             const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
               `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
-              `*Comandos disponibles:*\n` +
-              `• Escríbeme cualquier orden o duda normalmente.\n` +
-              `• \`/programar <tarea>\` (o \`/code\`) — Desarrollar proyectos, crear scripts y commitear a GitHub de forma autónoma.\n` +
-              `• \`/proyectos\` — Ver archivos y proyectos en tu workspace del VPS.\n` +
-              `• \`/terminal <comando>\` — Ejecutar un comando en la terminal Linux del servidor.\n` +
-              `• \`/herramientas\` — Ver todas las integraciones activas (${activeAppsList.length}).\n` +
-              `• \`/notas\` — Ver tus notas y recordatorios activos.\n` +
-              `• \`/anotar <texto>\` — Guardar una nueva nota.\n` +
-              `• \`/memoria\` — Consultar lo que recuerdo sobre ti.\n` +
-              `• \`/limpiar\` — Reiniciar el contexto de esta conversación.\n\n` +
+              `*Control de tu PC Remoto:*\n` +
+              `• \`/pc\` — Ver si tu ordenador está encendido o apagado ahora.\n` +
+              `• \`/apagar_pc\` — Apagar tu ordenador de inmediato.\n` +
+              `• \`/apagar_pc_en <min>\` — Programar apagado en X minutos (ej: \`/apagar_pc_en 30\`).\n` +
+              `• \`/cancelar_apagado\` — Cancelar cualquier apagado en curso.\n\n` +
+              `*Desarrollo & Herramientas:*\n` +
+              `• \`/programar <tarea>\` — Desarrollo de proyectos autónomo.\n` +
+              `• \`/herramientas\` — Ver las ${activeAppsList.length} integraciones activas.\n` +
+              `• \`/proyectos\` — Archivos en tu workspace.\n` +
+              `• \`/notas\` — Ver y crear notas.\n` +
+              `• \`/memoria\` — Ver lo que recuerdo sobre ti.\n\n` +
               `_¿En qué puedo asistirte hoy?_`;
             await sendTextMessage(chatId, welcome);
+            continue;
+          }
+
+          if (userText === "/pc" || userText === "/estado_pc") {
+            const pc = await getPcStatus();
+            if (pc.online) {
+              const msg = `🟢 *Tu ordenador está ENCENDIDO y en línea*\n\n` +
+                `• *Host:* \`${pc.hostname}\`\n` +
+                `• *Conexión:* Activa (hace ${pc.secondsAgo || 1}s)\n` +
+                `• *Comandos pendientes:* ${pc.pendingCommands}\n\n` +
+                `_Puedes apagarlo escribiendo \`/apagar_pc\` o programar el apagado con \`/apagar_pc_en <minutos>\`._`;
+              await sendTextMessage(chatId, msg);
+            } else {
+              const msg = `🔴 *Tu ordenador está APAGADO*\n\n` +
+                `• *Última conexión:* ${pc.lastSeen ? new Date(pc.lastSeen).toLocaleTimeString("es-ES") : "Sin registro hoy"}\n\n` +
+                `_En el siguiente paso configuraremos el encendido remoto desde el móvil._`;
+              await sendTextMessage(chatId, msg);
+            }
+            continue;
+          }
+
+          if (userText === "/apagar_pc") {
+            const pc = await getPcStatus();
+            if (!pc.online) {
+              await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO*.`);
+            } else {
+              await sendPcCommand("shutdown", 10);
+              await sendTextMessage(
+                chatId,
+                `🛑 *Orden de apagado enviada a tu PC*\n\nTu ordenador se apagará en *10 segundos*.\nSi deseas cancelarlo, escribe rápidamente \`/cancelar_apagado\`.`
+              );
+            }
+            continue;
+          }
+
+          if (userText.startsWith("/apagar_pc_en ")) {
+            const min = parseInt(userText.replace("/apagar_pc_en ", "").trim(), 10);
+            if (isNaN(min) || min <= 0) {
+              await sendTextMessage(chatId, `⚠️ Indica un número de minutos válido. Ejemplo: \`/apagar_pc_en 30\``);
+            } else {
+              const sec = min * 60;
+              await sendPcCommand("shutdown", sec);
+              await sendTextMessage(
+                chatId,
+                `⏳ *Apagado programado*\n\nTu ordenador se apagará automáticamente en *${min} minutos*.\nPara cancelarlo, escribe \`/cancelar_apagado\`.`
+              );
+            }
+            continue;
+          }
+
+          if (userText === "/cancelar_apagado") {
+            await sendPcCommand("cancel_shutdown");
+            await sendTextMessage(chatId, `✅ *Apagado cancelado con éxito.* Tu ordenador seguirá encendido.`);
             continue;
           }
 
