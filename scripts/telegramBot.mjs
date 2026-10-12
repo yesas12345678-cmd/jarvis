@@ -57,6 +57,9 @@ const TOOLKIT_METADATA = {
   googlecalendar: { name: "Google Calendar", icon: "📅", desc: "Agenda, citas y eventos" },
   googledrive: { name: "Google Drive", icon: "📁", desc: "Almacenamiento y documentos en la nube" },
   googledocs: { name: "Google Docs", icon: "📄", desc: "Creación y edición de documentos" },
+  elevenlabs: { name: "ElevenLabs", icon: "🎙️", desc: "Síntesis de voz ultra-realista y clonación" },
+  reddit: { name: "Reddit", icon: "🤖", desc: "Comunidades, posts y tendencias" },
+  discord: { name: "Discord", icon: "💬", desc: "Servidores, canales y mensajería" },
   googlesheets: { name: "Google Sheets", icon: "📊", desc: "Hojas de cálculo y tablas" },
   youtube: { name: "YouTube", icon: "📺", desc: "Búsqueda de videos, playlists y canal" },
   notion: { name: "Notion", icon: "📓", desc: "Páginas, notas y bases de conocimiento" },
@@ -77,32 +80,39 @@ async function syncConnectedApps(force = false) {
   }
 
   try {
-    const accounts = await composio.client.connectedAccounts.list();
+    let cursor = null;
+    const allItems = [];
+    do {
+      const res = await composio.client.connectedAccounts.list({ cursor: cursor || undefined });
+      if (res && res.items) {
+        allItems.push(...res.items);
+      }
+      cursor = res?.next_cursor;
+    } while (cursor);
+
     const seen = new Set();
     const list = [];
 
-    if (accounts && accounts.items) {
-      for (const acc of accounts.items) {
-        if (acc.status === "ACTIVE") {
-          if (!composioUserId) composioUserId = acc.user_id;
-          const slug = acc.toolkit?.slug?.toLowerCase() || "";
+    for (const acc of allItems) {
+      if (acc.status === "ACTIVE") {
+        if (!composioUserId) composioUserId = acc.user_id;
+        const slug = acc.toolkit?.slug?.toLowerCase() || "";
 
-          if (slug && !seen.has(slug)) {
-            seen.add(slug);
-            const meta = TOOLKIT_METADATA[slug] || {
-              name: acc.toolkit?.name || slug.toUpperCase(),
-              icon: "⚡",
-              desc: "Servicio conectado",
-            };
+        if (slug && !seen.has(slug)) {
+          seen.add(slug);
+          const meta = TOOLKIT_METADATA[slug] || {
+            name: acc.toolkit?.name || slug.toUpperCase(),
+            icon: "⚡",
+            desc: "Servicio conectado",
+          };
 
-            list.push({
-              slug,
-              name: meta.name,
-              icon: meta.icon,
-              desc: meta.desc,
-              detail: slug === "gmail" ? primaryGmailAddress : null,
-            });
-          }
+          list.push({
+            slug,
+            name: meta.name,
+            icon: meta.icon,
+            desc: meta.desc,
+            detail: slug === "gmail" ? primaryGmailAddress : null,
+          });
         }
       }
     }
