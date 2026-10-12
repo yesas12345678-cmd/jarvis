@@ -7,11 +7,12 @@ if (-not $jarvisDesktop) {
     $jarvisDesktop = New-Desktop | Set-DesktopName -Name 'Jarvis'
 }
 
-# Find J.A.R.V.I.S. app window handle by title
-$hwnd = (Get-Process | Where-Object { $_.MainWindowTitle -eq 'J.A.R.V.I.S. - Stark Industries OS' }).MainWindowHandle
+# Find Jude / J.A.R.V.I.S. app window handle by title
+$proc = Get-Process | Where-Object { $_.MainWindowTitle -match 'Jude' -or $_.MainWindowTitle -match 'J\.A\.R\.V\.I\.S\.' } | Select-Object -First 1
+$hwnd = if ($proc) { $proc.MainWindowHandle } else { $null }
 if ($hwnd) {
     Move-Window -Hwnd $hwnd -Desktop $jarvisDesktop
-    Write-Host "Successfully moved JARVIS window to Jarvis desktop."
+    Write-Host "Successfully moved Jude window to Jarvis desktop."
 } else {
-    Write-Warning "JARVIS window not found."
+    Write-Warning "Jude window not found."
 }
