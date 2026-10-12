@@ -56,6 +56,7 @@ export async function GET() {
     pendingCommands: state.commands?.length || 0,
     unreadProgress,
     completed,
+    proyectos: state.proyectos || [],
   });
 }
 
@@ -70,6 +71,7 @@ export async function POST(req: Request) {
     if (body.type === "heartbeat") {
       state.lastSeen = now;
       if (body.hostname) state.hostname = body.hostname;
+      if (body.proyectos) state.proyectos = body.proyectos;
 
       // Extraer comandos pendientes para entregárselos al PC
       const commandsToSend = [...(state.commands || [])];
@@ -106,14 +108,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "ok" });
     }
 
-    // 4. Encolar orden (apagado, reinicio o tarea de programación autónoma)
+    // 4. Encolar orden (apagado, reinicio, desarrollo, list_dir, run_pc_cmd)
     if (body.type === "command") {
       if (!state.commands) state.commands = [];
       const newCmd = {
         id: Date.now().toString(),
-        action: body.action, // "shutdown" | "cancel_shutdown" | "code_task"
+        action: body.action,
         delaySeconds: body.delaySeconds || 0,
         taskPrompt: body.taskPrompt || null,
+        path: body.path || null,
+        command: body.command || null,
         createdAt: new Date().toISOString(),
       };
       state.commands.push(newCmd);

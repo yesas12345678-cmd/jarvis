@@ -200,15 +200,15 @@ async function getPcStatus() {
     const res = await fetch("http://localhost:3001/api/pc-bridge");
     if (res.ok) return await res.json();
   } catch {}
-  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [] };
+  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [], proyectos: [] };
 }
 
-async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null) {
+async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null, extra = {}) {
   try {
     const res = await fetch("http://localhost:3001/api/pc-bridge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "command", action, delaySeconds, taskPrompt }),
+      body: JSON.stringify({ type: "command", action, delaySeconds, taskPrompt, ...extra }),
     });
     if (res.ok) return await res.json();
   } catch {}
@@ -217,6 +217,14 @@ async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null) {
 
 async function sendPcCodeTask(taskPrompt) {
   return await sendPcCommand("code_task", 0, taskPrompt);
+}
+
+async function sendPcListDir(targetPath = "C:\\PROYECTOS") {
+  return await sendPcCommand("list_dir", 0, null, { path: targetPath });
+}
+
+async function sendPcTerminalCmd(command) {
+  return await sendPcCommand("run_pc_cmd", 0, null, { command });
 }
 
 // Helper para llamadas a Telegram
@@ -363,9 +371,21 @@ async function askJudeBrain(userMessage, chatId, toolContext = "", mediaPart = n
     ? activeAppsList.map((a, i) => `${i + 1}. ${a.icon} ${a.name} (${a.desc}${a.detail ? `: ${a.detail}` : ""})`).join("\n")
     : "• Conexiones en proceso de inicialización.";
 
+  const pc = await getPcStatus();
+  const pcProyectosList = (pc.proyectos && pc.proyectos.length > 0)
+    ? pc.proyectos.map(p => `• ${p}`).join("\n")
+    : "• Consultando sincronización con el puente local.";
+
   const systemInstruction = `
 Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
 Te comunicas con ${USER_NAME} a través de su canal de Telegram (24/7 en su VPS).
+
+CONEXIÓN EN VIVO CON EL ORDENADOR LOCAL DE MANUEL (JUDE PC BRIDGE):
+- Estado actual de su PC en casa: ${pc.online ? `🟢 ENCENDIDO Y EN LÍNEA (${pc.hostname || "WIN-CM7ASU1D27L"})` : "🔴 APAGADO / HIBERNANDO"}
+- REGLA CRÍTICA: Tienes un enlace de control directo en tiempo real (Jude PC Bridge) con su ordenador personal. SÍ TIENES ACCESO COMPLETO a sus archivos locales, carpetas y terminal cuando su PC está encendido.
+- NUNCA le digas a Manuel que estás aislado en el VPS o que no tienes acceso a su ordenador o a su disco local. Cuando te pregunte por sus archivos o carpetas, dale la información real directamente.
+- CARPETAS ACTUALES EN SU DIRECTORIO LOCAL (C:\\PROYECTOS):
+${pcProyectosList}
 
 CAPACIDADES MULTIMODAL:
 - Puedes ver, analizar y describir con total precisión cualquier imagen o captura de pantalla que Manuel te envíe.
@@ -768,13 +788,36 @@ async function startPolling() {
             continue;
           }
 
-          if (userText === "/proyectos" || userText === "/archivos") {
-            const res = listProjectFiles();
-            if (!res.success || res.files.length === 0) {
-              await sendTextMessage(chatId, `📂 *Workspace de Proyectos*\n\nNo hay archivos en \`/app/workspace\` todavía. Puedes pedirme crear uno con \`/programar <tarea>\`.`);
+          if (userText === "/proyectos" || userText === "/archivos" || userText === "/carpetas" || userText === "/pc_carpetas") {
+            const pc = await getPcStatus();
+            if (pc.online && pc.proyectos && pc.proyectos.length > 0) {
+              const list = pc.proyectos.map((p) => `📁 \`${p}\``).join("\n");
+              await sendTextMessage(chatId, `📂 *Carpetas en tu PC (\`C:\\PROYECTOS\` — ${pc.proyectos.length} proyectos):*\n\n${list}`);
+            } else if (pc.online) {
+              await sendPcListDir("C:\\PROYECTOS");
+              await sendTextMessage(chatId, `🔍 Consultando directorio \`C:\\PROYECTOS\` en tu PC...`);
             } else {
-              const list = res.files.map((f) => `• ${f.type === "dir" ? "📁" : "📄"} \`${f.path}\` ${f.size ? `_(${f.size} B)_` : ""}`).slice(0, 35).join("\n");
-              await sendTextMessage(chatId, `📂 *Archivos en tu Workspace (${res.files.length}):*\n\n${list}`);
+              const res = listProjectFiles();
+              if (!res.success || res.files.length === 0) {
+                await sendTextMessage(chatId, `📂 *Workspace de Proyectos*\n\nTu PC está apagado y no hay archivos en el VPS todavía.`);
+              } else {
+                const list = res.files.map((f) => `• ${f.type === "dir" ? "📁" : "📄"} \`${f.path}\` ${f.size ? `_(${f.size} B)_` : ""}`).slice(0, 35).join("\n");
+                await sendTextMessage(chatId, `📂 *Archivos en Workspace VPS (${res.files.length}):*\n\n${list}`);
+              }
+            }
+            continue;
+          }
+
+          if (userText.startsWith("/pc_terminal ")) {
+            const cmd = userText.replace("/pc_terminal ", "").trim();
+            if (cmd) {
+              const pc = await getPcStatus();
+              if (!pc.online) {
+                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede ejecutar \`${cmd}\`.`);
+              } else {
+                await sendPcTerminalCmd(cmd);
+                await sendTextMessage(chatId, `💻 *Comando enviado a la consola de tu PC:* \`${cmd}\`...`);
+              }
             }
             continue;
           }
@@ -784,7 +827,7 @@ async function startPolling() {
             if (cmd) {
               const res = await runTerminalCommand(cmd);
               const output = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1000);
-              await sendTextMessage(chatId, `💻 *Comando:* \`${cmd}\`\n*Código:* ${res.code}\n\`\`\`\n${output}\n\`\`\``);
+              await sendTextMessage(chatId, `💻 *Comando (VPS):* \`${cmd}\`\n*Código:* ${res.code}\n\`\`\`\n${output}\n\`\`\``);
             }
             continue;
           }

@@ -1,5 +1,6 @@
 import os from "os";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import { exec, spawn } from "child_process";
 
@@ -167,7 +168,51 @@ async function handleCommand(cmd) {
       await sendProgressReport(cmd.id, `⚠️ *[ERROR ANTIGRAVITY]*: ${err.message}`);
       await sendTaskCompletion(cmd.id, `No se pudo completar: ${err.message}`);
     }
+    return;
   }
+
+  // 5. Listar directorios del PC
+  if (cmd.action === "list_dir") {
+    const targetPath = cmd.path || "C:\\PROYECTOS";
+    console.log(`📂 [LISTANDO DIRECTORIO EN PC]: ${targetPath}`);
+    try {
+      if (!fs.existsSync(targetPath)) {
+        await sendTaskCompletion(cmd.id, `⚠️ La ruta \`${targetPath}\` no existe en tu PC.`);
+        return;
+      }
+      const items = fs.readdirSync(targetPath, { withFileTypes: true });
+      const dirs = items.filter(i => i.isDirectory()).map(i => `📁 \`${i.name}\``);
+      const files = items.filter(i => !i.isDirectory()).map(i => `📄 \`${i.name}\``);
+      const summary = `📂 *Carpetas y archivos en tu PC (\`${targetPath}\`):*\n\n` +
+        (dirs.length > 0 ? `*Carpetas (${dirs.length}):*\n${dirs.slice(0, 35).join("\n")}\n\n` : "") +
+        (files.length > 0 ? `*Archivos (${files.length}):*\n${files.slice(0, 20).join("\n")}` : "");
+      await sendTaskCompletion(cmd.id, summary);
+    } catch (e) {
+      await sendTaskCompletion(cmd.id, `Error al leer \`${targetPath}\`: ${e.message}`);
+    }
+    return;
+  }
+
+  // 6. Ejecutar comando en la consola del PC
+  if (cmd.action === "run_pc_cmd" && cmd.command) {
+    console.log(`💻 [COMANDO DE CONSOLA EN PC]: ${cmd.command}`);
+    const res = await executeSystemCommand(cmd.command);
+    const out = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1500);
+    await sendTaskCompletion(cmd.id, `💻 *Comando en tu PC:* \`${cmd.command}\`\n\`\`\`\n${out}\n\`\`\``);
+    return;
+  }
+}
+
+function getProyectosList() {
+  try {
+    const pPath = "C:\\PROYECTOS";
+    if (fs.existsSync(pPath)) {
+      return fs.readdirSync(pPath, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+    }
+  } catch {}
+  return [];
 }
 
 async function sendHeartbeat() {
@@ -177,6 +222,7 @@ async function sendHeartbeat() {
       hostname: os.hostname(),
       uptime: Math.round(os.uptime()),
       platform: os.platform(),
+      proyectos: getProyectosList(),
     };
 
     const res = await fetch(BRIDGE_ENDPOINT, {
