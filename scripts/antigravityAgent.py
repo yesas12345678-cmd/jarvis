@@ -45,11 +45,20 @@ REGLAS ESTRICTAS:
 7. Trabaja dentro del directorio especificado o crea subdirectorios según necesites.
 """
 
+    skills_paths = [
+        p for p in [
+            os.path.join(abs_work_dir, ".agents", "skills"),
+            os.path.expanduser(r"~\.gemini\config\skills"),
+            os.path.expanduser(r"~\.gemini\antigravity-ide\builtin\skills"),
+        ] if os.path.exists(p)
+    ]
+
     config = LocalAgentConfig(
         system_instructions=system_instructions,
         capabilities=CapabilitiesConfig(),
         policies=[ag_policy.allow_all()],
         workspaces=[abs_work_dir],
+        skills_paths=skills_paths,
         api_key=api_key,
     )
 
