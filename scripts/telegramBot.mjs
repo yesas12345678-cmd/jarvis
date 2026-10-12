@@ -7,15 +7,15 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 dotenv.config();
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID;
+const ALLOWED_USER_ID = process.env.TELEGRAM_ALLOWED_USER_ID || "7777389793";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const USER_NAME = "Vaita";
+const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY;
+const USER_NAME = "Manuel (Vaita)";
 const ASSISTANT_NAME = "Jude";
 
 if (!BOT_TOKEN) {
   console.log("=================================================");
   console.log("ℹ️  TELEGRAM_BOT_TOKEN no está definido en .env.");
-  console.log("   El bot de Telegram permanecerá en espera.");
   console.log("=================================================");
   process.exit(0);
 }
@@ -27,10 +27,21 @@ if (!GEMINI_API_KEY) {
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+// Directorio de persistencia
 const DATA_DIR = path.join(process.cwd(), "data");
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
 const MEMORIES_FILE = path.join(DATA_DIR, "memories.json");
 const NOTES_FILE = path.join(DATA_DIR, "notes.json");
 const CHAT_HISTORY_FILE = path.join(DATA_DIR, "chat_history.json");
+
+// Inicializar archivos si no existen
+if (!fs.existsSync(MEMORIES_FILE)) fs.writeFileSync(MEMORIES_FILE, "[]", "utf-8");
+if (!fs.existsSync(NOTES_FILE)) fs.writeFileSync(NOTES_FILE, "[]", "utf-8");
+if (!fs.existsSync(CHAT_HISTORY_FILE)) fs.writeFileSync(CHAT_HISTORY_FILE, "{}", "utf-8");
 
 // Helper para llamadas a Telegram
 async function callTelegram(method, params = {}) {
@@ -60,13 +71,14 @@ function getMemories() {
 function saveMemory(text) {
   try {
     const current = getMemories();
-    if (!current.includes(text.trim())) {
-      const updated = [...current, text.trim()];
+    const cleanText = text.trim();
+    if (cleanText && !current.includes(cleanText)) {
+      const updated = [...current, cleanText];
       fs.writeFileSync(MEMORIES_FILE, JSON.stringify(updated, null, 2), "utf-8");
-      console.log(`[MEMORIA] Nuevo dato guardado: "${text.trim()}"`);
+      console.log(`[MEMORIA REGISTRADA] "${cleanText}"`);
     }
   } catch (err) {
-    console.error("[STORAGE] Error guardando memoria:", err);
+    console.error("[STORAGE ERROR] Guardando memoria:", err);
   }
 }
 
@@ -89,10 +101,10 @@ function addNote(text) {
     };
     const updated = [newNote, ...current];
     fs.writeFileSync(NOTES_FILE, JSON.stringify(updated, null, 2), "utf-8");
-    console.log(`[NOTAS] Nueva nota guardada: "${text.trim()}"`);
+    console.log(`[NOTA REGISTRADA] "${text.trim()}"`);
     return updated;
   } catch (err) {
-    console.error("[STORAGE] Error añadiendo nota:", err);
+    console.error("[STORAGE ERROR] Añadiendo nota:", err);
     return [];
   }
 }
@@ -111,47 +123,66 @@ function saveHistory(chatId, history) {
   try {
     let data = {};
     if (fs.existsSync(CHAT_HISTORY_FILE)) {
-      data = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
+      try {
+        data = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
+      } catch {}
     }
-    data[String(chatId)] = history.slice(-20);
+    data[String(chatId)] = history.slice(-30); // Guardar últimas 30 interacciones
     fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
   } catch (err) {
-    console.error("[STORAGE] Error guardando historial:", err);
+    console.error("[STORAGE ERROR] Guardando historial:", err);
   }
 }
 
-// Inferencia con Gemini SDK oficial
+// Inferencia con Gemini SDK y memoria contextual estricta
 async function askJudeBrain(userMessage, chatId) {
   const memories = getMemories();
   const history = getHistory(chatId);
 
   const systemInstruction = `
-Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio de ${USER_NAME}.
-Te estás comunicando con ${USER_NAME} a través de su chat privado de Telegram mientras el ordenador está apagado o en remoto.
+Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
+Te comunicas con ${USER_NAME} a través de su canal de Telegram (24/7 en su VPS).
 
-Personalidad: Impecable, sofisticada, concisa, profesional y leal. Trata a ${USER_NAME} siempre con respeto y por su nombre.
+PERSONALIDAD & TRATO:
+- Impecable, sofisticada, leal, eficiente y concisa.
+- Dirígete a él como Manuel o Vaita.
+- TIENES MEMORIA CONTINUA: Conoces perfectamente todo lo que te ha dicho previamente en este chat y tus respuestas anteriores. Nunca digas "este es nuestro primer mensaje" si hay historial previo.
 
-Capacidades en Telegram:
-1. Responde de forma directa, ágil y útil.
-2. Si te pide redactar un correo o mensaje (ej: para amigos, trabajo, etc.), redacta de inmediato el asunto y el cuerpo del correo con tono perfecto para que Vaita solo tenga que copiarlo y enviarlo.
-3. Si ${USER_NAME} te pide anotar algo o guardar una tarea, agrega la marca: [NOTA: texto de la nota].
-4. Si ${USER_NAME} te menciona un dato personal, preferencia o regla nueva que debas recordar siempre, agrega la marca: [MEMORIA: dato a recordar].
-5. Memorias permanentes que ya conoces de ${USER_NAME}:
-${memories.length > 0 ? memories.map((m) => ` - ${m}`).join("\n") : " - Ninguna registrada aún."}
+REGLAS DE MEMORIA ACTIVA:
+1. Recuerda todos los datos personales que te diga Manuel.
+2. Si Manuel te revela un dato nuevo (ej: "tengo novia", "mi trabajo es...", "vivo en...", "mi correo es..."), CONFÍRMASELO brevemente y añade al final de tu respuesta: [MEMORIA: dato exacto en 3-6 palabras].
+3. Si te pide anotar algo, añade: [NOTA: texto de la nota].
+4. Si pregunta por herramientas o Composio: infórmale de las herramientas disponibles o que Composio permite conectar su Gmail, Calendario, GitHub, etc. con su API key.
+
+BASE DE MEMORIAS PERMANENTES ACTUALES DE MANUEL:
+${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ninguna registrada todavía."}
 `;
 
-  // Construir historial previo
-  const contents = [];
+  // Construir historial garantizando alternancia estricta para la API de Gemini (user -> model -> user -> model)
+  const formattedContents = [];
+  let lastRole = null;
+
   for (const h of history) {
-    contents.push({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }],
+    const role = h.role === "assistant" ? "model" : "user";
+    if (role !== lastRole) {
+      formattedContents.push({
+        role,
+        parts: [{ text: h.content }],
+      });
+      lastRole = role;
+    }
+  }
+
+  // El último mensaje debe ser del usuario
+  if (lastRole === "user") {
+    // Si el último ya era user, reemplazar o concatenar
+    formattedContents[formattedContents.length - 1].parts[0].text += `\n${userMessage}`;
+  } else {
+    formattedContents.push({
+      role: "user",
+      parts: [{ text: userMessage }],
     });
   }
-  contents.push({
-    role: "user",
-    parts: [{ text: userMessage }],
-  });
 
   const availableModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
   let lastError = null;
@@ -162,17 +193,17 @@ ${memories.length > 0 ? memories.map((m) => ` - ${m}`).join("\n") : " - Ninguna 
         model: modelName,
         systemInstruction,
         generationConfig: {
-          temperature: 0.7,
+          temperature: 0.6,
           maxOutputTokens: 800,
         },
       });
 
-      const result = await model.generateContent({ contents });
+      const result = await model.generateContent({ contents: formattedContents });
       const reply = result.response.text();
       if (reply) return reply;
     } catch (err) {
       lastError = err;
-      console.warn(`[GEMINI_WARN] Fallo con ${modelName}, intentando siguiente:`, err.message);
+      console.warn(`[GEMINI_WARN] Fallo con ${modelName}:`, err.message);
     }
   }
 
@@ -187,7 +218,6 @@ async function sendTextMessage(chatId, text) {
     parse_mode: "Markdown",
   });
 
-  // Si Telegram rechaza el formato Markdown por caracteres no escapados, enviar como texto plano
   if (!res || !res.ok) {
     return await callTelegram("sendMessage", {
       chat_id: chatId,
@@ -202,11 +232,8 @@ async function startPolling() {
   console.log("=================================================");
   console.log(`🤖 [JUDE TELEGRAM BOT] Núcleo activo y escuchando.`);
   console.log(`   Asistente: ${ASSISTANT_NAME} // Usuario: ${USER_NAME}`);
-  if (ALLOWED_USER_ID) {
-    console.log(`   Seguridad: Restringido al ID de Telegram: ${ALLOWED_USER_ID}`);
-  } else {
-    console.log(`   ℹ️  Seguridad: Abierto inicialmente.`);
-  }
+  console.log(`   ID Autorizado: ${ALLOWED_USER_ID}`);
+  console.log(`   Memoria persistente: ACTIVA en ${DATA_DIR}`);
   console.log("=================================================");
 
   let offset = 0;
@@ -215,7 +242,7 @@ async function startPolling() {
     try {
       const updates = await callTelegram("getUpdates", {
         offset: offset,
-        timeout: 30,
+        timeout: 25,
       });
 
       if (updates && updates.ok && updates.result) {
@@ -229,7 +256,7 @@ async function startPolling() {
           const senderId = String(msg.from.id);
           const userText = msg.text.trim();
 
-          console.log(`[TELEGRAM] Mensaje recibido de ${msg.from.first_name || "Usuario"} (ID: ${senderId}): "${userText}"`);
+          console.log(`[TELEGRAM] Mensaje de ${msg.from.first_name || "Manuel"} (${senderId}): "${userText}"`);
 
           // Comprobación de seguridad
           if (ALLOWED_USER_ID && senderId !== String(ALLOWED_USER_ID)) {
@@ -314,7 +341,7 @@ async function startPolling() {
               aiReply = aiReply.replace(memoryMatch[0], "").trim();
             }
 
-            // Actualizar historial
+            // Actualizar historial asegurando alternancia
             const currentHistory = getHistory(chatId);
             currentHistory.push({ role: "user", content: userText });
             currentHistory.push({ role: "assistant", content: aiReply });
