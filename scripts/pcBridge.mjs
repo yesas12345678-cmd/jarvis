@@ -1,8 +1,7 @@
 import os from "os";
 import path from "path";
 import dotenv from "dotenv";
-import { exec } from "child_process";
-import { runAutonomousCodingAgent } from "./codingAgent.mjs";
+import { exec, spawn } from "child_process";
 
 dotenv.config();
 
@@ -75,27 +74,77 @@ async function handleCommand(cmd) {
     return;
   }
 
-  // 4. DESARROLLO DE SOFTWARE AUTÓNOMO EN EL PC
+  // 4. DESARROLLO DE SOFTWARE AUTÓNOMO EN EL PC — POTENCIADO POR ANTIGRAVITY
   if (cmd.action === "code_task" && cmd.taskPrompt) {
-    console.log(`🚀 [TAREA DE PROGRAMACIÓN EN TU PC]: ${cmd.taskPrompt}`);
-    await sendProgressReport(cmd.id, `💻 *[TU PC EN CASA]* Ha tomado el control. Iniciando desarrollo local en \`${process.cwd()}\`...`);
+    console.log(`🚀 [ANTIGRAVITY AGENT] Tarea recibida: ${cmd.taskPrompt}`);
+    await sendProgressReport(cmd.id, `🧠 *[ANTIGRAVITY EN TU PC]* Lanzando agente con todas las herramientas de Antigravity SDK...\n\n🎯 _${cmd.taskPrompt}_`);
 
     try {
-      const summary = await runAutonomousCodingAgent({
-        taskPrompt: cmd.taskPrompt,
-        geminiApiKey: GEMINI_API_KEY,
-        onProgress: async (update) => {
-          console.log(`[PROGRESO PC] ${update}`);
-          await sendProgressReport(cmd.id, `🖥️ *[TU PC]* ${update}`);
-        },
+      const scriptPath = path.join(process.cwd(), "scripts", "antigravityAgent.py");
+      const summary = await new Promise((resolve, reject) => {
+        const child = spawn("python", [
+          scriptPath,
+          "--task", cmd.taskPrompt,
+          "--cwd", process.cwd(),
+          "--output-json",
+        ], {
+          cwd: process.cwd(),
+          env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+        });
+
+        let output = "";
+        let lastReport = Date.now();
+
+        child.stdout.on("data", async (data) => {
+          const text = data.toString("utf-8");
+          output += text;
+          process.stdout.write(text);
+
+          // Enviar actualizaciones a Telegram cada 8 segundos
+          if (Date.now() - lastReport > 8000) {
+            lastReport = Date.now();
+            const lines = output.trim().split("\n");
+            const lastLines = lines.slice(-5).join("\n");
+            await sendProgressReport(cmd.id, `🖥️ *[ANTIGRAVITY]* Progreso:\n\`\`\`\n${lastLines.slice(0, 500)}\n\`\`\``);
+          }
+        });
+
+        child.stderr.on("data", (data) => {
+          process.stderr.write(data.toString("utf-8"));
+        });
+
+        child.on("close", (code) => {
+          if (code === 0) {
+            // Buscar JSON de resultado al final
+            const jsonMarker = "__RESULT_JSON__";
+            const jsonIdx = output.indexOf(jsonMarker);
+            if (jsonIdx !== -1) {
+              try {
+                const jsonStr = output.slice(jsonIdx + jsonMarker.length).trim();
+                const result = JSON.parse(jsonStr);
+                resolve(result.summary || "Tarea completada por Antigravity.");
+              } catch {
+                resolve("✅ Tarea completada por Antigravity (sin JSON estructurado).");
+              }
+            } else {
+              // Usar las últimas líneas como resumen
+              const lines = output.trim().split("\n");
+              resolve(lines.slice(-10).join("\n").slice(0, 1500));
+            }
+          } else {
+            reject(new Error(`Antigravity Agent finalizó con código ${code}`));
+          }
+        });
+
+        child.on("error", (err) => reject(err));
       });
 
-      console.log(`✅ [TAREA COMPLETADA EN PC]:`, summary);
-      await sendTaskCompletion(cmd.id, summary);
+      console.log(`✅ [ANTIGRAVITY AGENT] Tarea completada:`, summary);
+      await sendTaskCompletion(cmd.id, `🧠 *Antigravity ha completado la tarea en tu PC:*\n\n${summary}`);
     } catch (err) {
-      console.error(`❌ [ERROR EN PC]:`, err);
-      await sendProgressReport(cmd.id, `⚠️ *[ERROR EN TU PC]*: ${err.message}`);
-      await sendTaskCompletion(cmd.id, `No se pudo completar la tarea en el PC: ${err.message}`);
+      console.error(`❌ [ANTIGRAVITY AGENT ERROR]:`, err);
+      await sendProgressReport(cmd.id, `⚠️ *[ERROR ANTIGRAVITY]*: ${err.message}`);
+      await sendTaskCompletion(cmd.id, `No se pudo completar: ${err.message}`);
     }
   }
 }
