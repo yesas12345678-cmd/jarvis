@@ -12,6 +12,8 @@ services:
     volumes:
       # Persistencia de memoria permanente, notas y conversaciones
       - ./data:/app/data
+      # Espacio de trabajo autónomo para proyectos de código
+      - ./workspace:/app/workspace
     env_file:
       - .env
     environment:

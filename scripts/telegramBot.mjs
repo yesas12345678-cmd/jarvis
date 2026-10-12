@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { runAutonomousCodingAgent, listProjectFiles, runTerminalCommand } from "./codingAgent.mjs";
 
 // Cargar variables de entorno
 dotenv.config();
@@ -460,6 +461,9 @@ async function startPolling() {
               `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
               `*Comandos disponibles:*\n` +
               `• Escríbeme cualquier orden o duda normalmente.\n` +
+              `• \`/programar <tarea>\` (o \`/code\`) — Desarrollar proyectos, crear scripts y commitear a GitHub de forma autónoma.\n` +
+              `• \`/proyectos\` — Ver archivos y proyectos en tu workspace del VPS.\n` +
+              `• \`/terminal <comando>\` — Ejecutar un comando en la terminal Linux del servidor.\n` +
               `• \`/herramientas\` — Ver todas las integraciones activas (${activeAppsList.length}).\n` +
               `• \`/notas\` — Ver tus notas y recordatorios activos.\n` +
               `• \`/anotar <texto>\` — Guardar una nueva nota.\n` +
@@ -467,6 +471,48 @@ async function startPolling() {
               `• \`/limpiar\` — Reiniciar el contexto de esta conversación.\n\n` +
               `_¿En qué puedo asistirte hoy?_`;
             await sendTextMessage(chatId, welcome);
+            continue;
+          }
+
+          if (userText.startsWith("/code ") || userText.startsWith("/programar ")) {
+            const prompt = userText.replace(/^\/(code|programar)\s+/, "").trim();
+            if (prompt) {
+              await sendTextMessage(chatId, `🚀 *Modo Agente Programador Activado*\n\n🎯 *Objetivo:* _${prompt}_\n\nIniciando desarrollo autónomo en el servidor VPS...`);
+              try {
+                const summary = await runAutonomousCodingAgent({
+                  taskPrompt: prompt,
+                  geminiApiKey: GEMINI_API_KEY,
+                  composioSession,
+                  onProgress: async (update) => {
+                    await sendTextMessage(chatId, update);
+                  },
+                });
+                await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
+              } catch (agentErr) {
+                await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+              }
+            }
+            continue;
+          }
+
+          if (userText === "/proyectos" || userText === "/archivos") {
+            const res = listProjectFiles();
+            if (!res.success || res.files.length === 0) {
+              await sendTextMessage(chatId, `📂 *Workspace de Proyectos*\n\nNo hay archivos en \`/app/workspace\` todavía. Puedes pedirme crear uno con \`/programar <tarea>\`.`);
+            } else {
+              const list = res.files.map((f) => `• ${f.type === "dir" ? "📁" : "📄"} \`${f.path}\` ${f.size ? `_(${f.size} B)_` : ""}`).slice(0, 35).join("\n");
+              await sendTextMessage(chatId, `📂 *Archivos en tu Workspace (${res.files.length}):*\n\n${list}`);
+            }
+            continue;
+          }
+
+          if (userText.startsWith("/terminal ")) {
+            const cmd = userText.replace("/terminal ", "").trim();
+            if (cmd) {
+              const res = await runTerminalCommand(cmd);
+              const output = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1000);
+              await sendTextMessage(chatId, `💻 *Comando:* \`${cmd}\`\n*Código:* ${res.code}\n\`\`\`\n${output}\n\`\`\``);
+            }
             continue;
           }
 
@@ -516,6 +562,37 @@ async function startPolling() {
           if (userText === "/limpiar") {
             saveHistory(chatId, []);
             await sendTextMessage(chatId, `🧹 *Contexto reiniciado.* Listo para una nueva conversación.`);
+            continue;
+          }
+
+          // DETECCIÓN EN LENGUAJE NATURAL DE TAREAS DE PROGRAMACIÓN AUTÓNOMA
+          const lowerText = userText.toLowerCase();
+          const isCodingRequest =
+            (lowerText.startsWith("programa ") ||
+             lowerText.startsWith("crea un script ") ||
+             lowerText.startsWith("crea un proyecto ") ||
+             lowerText.startsWith("crea un bot ") ||
+             lowerText.startsWith("desarrolla un ") ||
+             lowerText.startsWith("haz un script ") ||
+             lowerText.startsWith("haz un bot ")) &&
+            !lowerText.includes("cómo ") &&
+            !lowerText.includes("que es ");
+
+          if (isCodingRequest) {
+            await sendTextMessage(chatId, `🚀 *Modo Agente Programador Activado*\n\n🎯 *Petición detectada:* _${userText}_\n\nIniciando desarrollo autónomo en el servidor VPS...`);
+            try {
+              const summary = await runAutonomousCodingAgent({
+                taskPrompt: userText,
+                geminiApiKey: GEMINI_API_KEY,
+                composioSession,
+                onProgress: async (update) => {
+                  await sendTextMessage(chatId, update);
+                },
+              });
+              await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
+            } catch (agentErr) {
+              await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+            }
             continue;
           }
 

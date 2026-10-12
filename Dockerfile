@@ -2,8 +2,8 @@ FROM node:22-alpine AS runner
 
 WORKDIR /app
 
-# Instalar dependencias necesarias para compilación de ciertas librerías si se requieren
-RUN apk add --no-cache libc6-compat
+# Instalar dependencias y herramientas para desarrollo autónomo
+RUN apk add --no-cache libc6-compat git bash python3 py3-pip curl
 
 # Copiar manifiestos de paquetes
 COPY package*.json ./
@@ -22,8 +22,8 @@ ENV PORT=3001
 # Compilar aplicación Next.js
 RUN npm run build
 
-# Crear directorio persistente para notas y memorias
-RUN mkdir -p /app/data
+# Crear directorios persistentes para notas, memorias y proyectos
+RUN mkdir -p /app/data /app/workspace
 
 # Exponer puerto 3001 para la interfaz holográfica web
 EXPOSE 3001
