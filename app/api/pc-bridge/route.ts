@@ -108,7 +108,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "ok" });
     }
 
-    // 4. Encolar orden (apagado, reinicio, desarrollo, list_dir, run_pc_cmd)
+    // 4. Encolar orden (apagado, reinicio, desarrollo, list_dir, run_pc_cmd, read_file, write_file, obsidian_note)
     if (body.type === "command") {
       if (!state.commands) state.commands = [];
       const newCmd = {
@@ -118,6 +118,10 @@ export async function POST(req: Request) {
         taskPrompt: body.taskPrompt || null,
         path: body.path || null,
         command: body.command || null,
+        content: body.content || null,
+        folder: body.folder || null,
+        filename: body.filename || null,
+        mode: body.mode || null,
         createdAt: new Date().toISOString(),
       };
       state.commands.push(newCmd);

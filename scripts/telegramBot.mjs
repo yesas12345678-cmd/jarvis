@@ -227,6 +227,18 @@ async function sendPcTerminalCmd(command) {
   return await sendPcCommand("run_pc_cmd", 0, null, { command });
 }
 
+async function sendPcReadFile(filePath) {
+  return await sendPcCommand("read_file", 0, null, { path: filePath });
+}
+
+async function sendPcWriteFile(filePath, content) {
+  return await sendPcCommand("write_file", 0, null, { path: filePath, content });
+}
+
+async function sendPcObsidianNote(folder, filename, content, mode = "write") {
+  return await sendPcCommand("obsidian_note", 0, null, { folder, filename, content, mode });
+}
+
 // Helper para llamadas a Telegram
 async function callTelegram(method, params = {}) {
   try {
@@ -417,7 +429,14 @@ REGLAS DE OPERACIÓN:
 6. ROL CLAVE EN DESARROLLO Y PROGRAMACIÓN:
    - Tú eres el Chief of Staff y Orquestador Supremo. Tú NO programas código directamente ni pretendes programar software por tu cuenta.
    - Para programar, escribir código, refactorizar, editar archivos de desarrollo o compilar proyectos, SIEMPRE necesitas y delegas en ANTIGRAVITY (el motor y agente de programación local).
-   - Cuando Manuel te hable de programar o crear funciones, orquesta la estrategia y déjale claro que la implementación técnica en código se la asignas a Antigravity.
+   - Cuando Manuel te hable de programar o crear funciones, orquesta la estrategia y déjale claro que la implementación técnica en código se la asignas a Antigravity usando [ACCION_PC_CODE: tarea].
+
+7. CONTROL DE ARCHIVOS Y TERMINAL EN EL PC (JUDE PC BRIDGE):
+   - Sí tienes acceso en vivo al disco local de Manuel cuando su PC está en línea.
+   - Si te pide ver o leer un archivo de su PC: añade [ACCION_LEER_ARCHIVO: ruta_completa].
+   - Si te pide crear o editar un archivo en su PC: añade [ACCION_EDITAR_ARCHIVO: ruta_completa | contenido].
+   - Si te pide ejecutar un comando en la consola de su PC: añade [ACCION_PC_CMD: comando].
+   - Si te pide registrar una nota o arquitectura en su Segundo Cerebro (Obsidian): añade [ACCION_OBSIDIAN: carpeta | titulo | contenido].
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
@@ -559,10 +578,9 @@ async function startPolling() {
         }
         if (pcState.completed && pcState.completed.length > 0) {
           for (const c of pcState.completed) {
-            await sendTextMessage(
-              ALLOWED_USER_ID,
-              `🏁 *[DESARROLLO EN TU PC FINALIZADO CON ÉXITO]*\n\n${c.summary}`
-            );
+            const isPlain = c.summary.startsWith("📄") || c.summary.startsWith("💻") || c.summary.startsWith("✅") || c.summary.startsWith("🧠") || c.summary.startsWith("⚠️") || c.summary.startsWith("📂");
+            const finalMsg = isPlain ? c.summary : `🏁 *[DESARROLLO EN TU PC FINALIZADO]*\n\n${c.summary}`;
+            await sendTextMessage(ALLOWED_USER_ID, finalMsg);
           }
         }
       } catch (monitorErr) {
@@ -826,6 +844,39 @@ async function startPolling() {
             continue;
           }
 
+          if (userText.startsWith("/leer ")) {
+            const filePath = userText.replace("/leer ", "").trim();
+            if (filePath) {
+              const pc = await getPcStatus();
+              if (!pc.online) {
+                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede leer \`${filePath}\`.`);
+              } else {
+                await sendPcReadFile(filePath);
+                await sendTextMessage(chatId, `🔍 *Leyendo archivo en tu PC:* \`${filePath}\`...`);
+              }
+            }
+            continue;
+          }
+
+          if (userText.startsWith("/editar ")) {
+            const raw = userText.replace("/editar ", "").trim();
+            const parts = raw.split("|");
+            const filePath = parts[0]?.trim();
+            const content = parts.slice(1).join("|")?.trim();
+            if (filePath && content !== undefined) {
+              const pc = await getPcStatus();
+              if (!pc.online) {
+                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede editar \`${filePath}\`.`);
+              } else {
+                await sendPcWriteFile(filePath, content);
+                await sendTextMessage(chatId, `✏️ *Guardando cambios en tu PC:* \`${filePath}\`...`);
+              }
+            } else {
+              await sendTextMessage(chatId, `⚠️ Formato: \`/editar ruta_archivo | nuevo contenido\``);
+            }
+            continue;
+          }
+
           if (userText.startsWith("/terminal ")) {
             const cmd = userText.replace("/terminal ", "").trim();
             if (cmd) {
@@ -990,6 +1041,77 @@ async function startPolling() {
               } catch (sendErr) {
                 console.error("[EMAIL SEND ERROR]", sendErr);
                 aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
+              }
+            }
+
+            // Detectar acción de comando en consola de PC
+            const pcCmdMatch = aiReply.match(/\[ACCION_PC_CMD:\s*(.*?)\]/i);
+            if (pcCmdMatch) {
+              const cmdToRun = pcCmdMatch[1].trim();
+              aiReply = aiReply.replace(pcCmdMatch[0], "").trim();
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcTerminalCmd(cmdToRun);
+                aiReply += `\n\n💻 _Comando ejecutado en tu PC:_ \`${cmdToRun}\``;
+              } else {
+                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado/hibernando para ejecutar este comando._`;
+              }
+            }
+
+            // Detectar acción de lectura de archivo en PC
+            const readMatch = aiReply.match(/\[ACCION_LEER_ARCHIVO:\s*(.*?)\]/i);
+            if (readMatch) {
+              const pathTarget = readMatch[1].trim();
+              aiReply = aiReply.replace(readMatch[0], "").trim();
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcReadFile(pathTarget);
+                aiReply += `\n\n📄 _Consultando archivo en tu PC:_ \`${pathTarget}\`...`;
+              } else {
+                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado. Enciéndelo para leer este archivo._`;
+              }
+            }
+
+            // Detectar acción de edición o creación de archivo en PC
+            const editMatch = aiReply.match(/\[ACCION_EDITAR_ARCHIVO:\s*(.*?)\s*\|\s*(.*?)\]/is);
+            if (editMatch) {
+              const pathTarget = editMatch[1].trim();
+              const fileContent = editMatch[2].trim();
+              aiReply = aiReply.replace(editMatch[0], "").trim();
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcWriteFile(pathTarget, fileContent);
+                aiReply += `\n\n✏️ _Guardando archivo en tu PC:_ \`${pathTarget}\`...`;
+              } else {
+                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para guardar este archivo._`;
+              }
+            }
+
+            // Detectar delegación de programación a Antigravity en PC
+            const codeTaskMatch = aiReply.match(/\[ACCION_PC_CODE:\s*(.*?)\]/i);
+            if (codeTaskMatch) {
+              const promptTask = codeTaskMatch[1].trim();
+              aiReply = aiReply.replace(codeTaskMatch[0], "").trim();
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcCodeTask(promptTask);
+                aiReply += `\n\n🚀 *Misión delegada a Antigravity en tu PC:* _${promptTask}_`;
+              } else {
+                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para programar en local._`;
+              }
+            }
+
+            // Detectar registro autónomo en Obsidian (Segundo Cerebro)
+            const obsidianMatch = aiReply.match(/\[ACCION_OBSIDIAN:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/is);
+            if (obsidianMatch) {
+              const folder = obsidianMatch[1].trim();
+              const filename = obsidianMatch[2].trim();
+              const content = obsidianMatch[3].trim();
+              aiReply = aiReply.replace(obsidianMatch[0], "").trim();
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcObsidianNote(folder, filename, content);
+                aiReply += `\n\n🧠 _Registrado en Segundo Cerebro (Obsidian):_ \`${folder}/${filename}\``;
               }
             }
 

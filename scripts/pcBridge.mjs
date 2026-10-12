@@ -227,6 +227,42 @@ async function handleCommand(cmd) {
     }
     return;
   }
+
+  // 8. Lectura de archivos en el PC
+  if (cmd.action === "read_file" && cmd.path) {
+    console.log(`📄 [LEYENDO ARCHIVO EN PC]: ${cmd.path}`);
+    try {
+      if (!fs.existsSync(cmd.path)) {
+        await sendTaskCompletion(cmd.id, `⚠️ El archivo \`${cmd.path}\` no existe en tu PC.`);
+        return;
+      }
+      const stats = fs.statSync(cmd.path);
+      if (stats.size > 2000000) {
+        await sendTaskCompletion(cmd.id, `⚠️ El archivo \`${cmd.path}\` es demasiado grande (${Math.round(stats.size / 1024)} KB) para mostrarlo en Telegram.`);
+        return;
+      }
+      const raw = fs.readFileSync(cmd.path, "utf-8");
+      const preview = raw.length > 2500 ? raw.slice(0, 2500) + "\n\n... (contenido restante truncado)" : raw;
+      await sendTaskCompletion(cmd.id, `📄 *Contenido de* \`${path.basename(cmd.path)}\`:\n\`\`\`\n${preview}\n\`\`\``);
+    } catch (e) {
+      await sendTaskCompletion(cmd.id, `⚠️ Error al leer \`${cmd.path}\`: ${e.message}`);
+    }
+    return;
+  }
+
+  // 9. Escritura / Edición de archivos en el PC
+  if (cmd.action === "write_file" && cmd.path) {
+    console.log(`✏️ [ESCRIBIENDO ARCHIVO EN PC]: ${cmd.path}`);
+    try {
+      const dir = path.dirname(cmd.path);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(cmd.path, cmd.content || "", "utf-8");
+      await sendTaskCompletion(cmd.id, `✅ *Archivo guardado con éxito en tu PC:* \`${cmd.path}\``);
+    } catch (e) {
+      await sendTaskCompletion(cmd.id, `⚠️ Error al escribir \`${cmd.path}\`: ${e.message}`);
+    }
+    return;
+  }
 }
 
 function getProyectosList() {
