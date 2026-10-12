@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-import { USER_NAME, ASSISTANT_NAME, ASSISTANT_PRONUNCIATION, CoreTheme } from "@/lib/constants";
+import { USER_NAME, ASSISTANT_NAME, CoreTheme } from "@/lib/constants";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dns from "dns";
 
@@ -8,7 +7,7 @@ try {
 } catch {}
 
 const SYSTEM_PROMPT = `
-Eres ${ASSISTANT_NAME} (pronunciado ${ASSISTANT_PRONUNCIATION}), un asistente de inteligencia artificial personal de alta gama con interfaz holográfica, al servicio de ${USER_NAME}.
+Eres ${ASSISTANT_NAME}, un asistente de inteligencia artificial personal de alta gama con interfaz holográfica, al servicio de ${USER_NAME}.
 Tu personalidad es impecable, elegante, concisa, profesional y con un toque cálido pero altamente eficiente.
 
 REGLAS CRÍTICAS DE RESPUESTA:

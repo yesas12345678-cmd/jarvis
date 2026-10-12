@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.gitignore
+*.bat
+*.ps1
+pantalla*.png
+pantalla*.jpg
+temp.mp3
+.env
+.env.local

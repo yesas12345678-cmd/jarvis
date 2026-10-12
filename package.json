@@ -1,11 +1,12 @@
 {
   "name": "jude-assistant",
   "version": "1.0.0",
-  "description": "Jude (Yud) - Asistente Holográfico Inteligente de Alta Definición para Vaita",
+  "description": "Jude - Asistente Holográfico Inteligente de Alta Definición para Vaita",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
+    "telegram": "node scripts/telegramBot.mjs",
     "legacy:server": "node server.js"
   },
   "dependencies": {

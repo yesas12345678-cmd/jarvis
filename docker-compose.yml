@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  jude:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jude-assistant
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # Persistencia de memoria permanente, notas y conversaciones
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - NEXT_TELEMETRY_DISABLED=1
