@@ -45,16 +45,103 @@ if (!fs.existsSync(NOTES_FILE)) fs.writeFileSync(NOTES_FILE, "[]", "utf-8");
 if (!fs.existsSync(CHAT_HISTORY_FILE)) fs.writeFileSync(CHAT_HISTORY_FILE, "{}", "utf-8");
 if (!fs.existsSync(ARCHIVE_FILE)) fs.writeFileSync(ARCHIVE_FILE, "[]", "utf-8");
 
-// Inicializar Composio si la clave existe
-let composioClient = null;
-if (COMPOSIO_API_KEY) {
-  try {
-    const { ComposioToolSet } = await import("composio-core");
-    composioClient = new ComposioToolSet({ apiKey: COMPOSIO_API_KEY });
-    console.log("⚡ [COMPOSIO] Herramientas conectadas correctamente.");
-  } catch (err) {
-    console.warn("⚠️  [COMPOSIO] Error inicializando Composio:", err.message);
+// ==========================================
+// INTEGRACIÓN CON COMPOSIO (@composio/core)
+// ==========================================
+let composio = null;
+let composioSession = null;
+let composioUserId = null;
+let connectedAppsStatus = {
+  gmail: { active: false, email: null },
+  calendar: { active: false },
+  github: { active: false },
+};
+
+async function initComposio() {
+  if (!COMPOSIO_API_KEY) {
+    console.log("ℹ️  [COMPOSIO] No se especificó COMPOSIO_API_KEY.");
+    return;
   }
+
+  try {
+    const { Composio } = await import("@composio/core");
+    composio = new Composio({ apiKey: COMPOSIO_API_KEY });
+
+    // Descubrir cuentas conectadas
+    const accounts = await composio.client.connectedAccounts.list();
+    if (accounts && accounts.items) {
+      for (const acc of accounts.items) {
+        if (acc.status === "ACTIVE") {
+          composioUserId = acc.user_id;
+          const toolkit = acc.toolkit?.slug?.toLowerCase() || "";
+          if (toolkit.includes("gmail")) {
+            connectedAppsStatus.gmail.active = true;
+          }
+          if (toolkit.includes("calendar")) {
+            connectedAppsStatus.calendar.active = true;
+          }
+          if (toolkit.includes("github")) {
+            connectedAppsStatus.github.active = true;
+          }
+        }
+      }
+    }
+
+    if (!composioUserId) {
+      composioUserId = "7777389793";
+    }
+
+    composioSession = await composio.create(composioUserId);
+
+    // Obtener detalles del perfil de Gmail si está activo
+    if (connectedAppsStatus.gmail.active) {
+      try {
+        const profile = await composioSession.execute("GMAIL_GET_PROFILE", {});
+        if (profile?.data?.emailAddress) {
+          connectedAppsStatus.gmail.email = profile.data.emailAddress;
+        }
+      } catch {}
+    }
+
+    console.log("⚡ [COMPOSIO] Sesión iniciada con éxito.");
+    console.log(`   Usuario: ${composioUserId}`);
+    console.log(`   Gmail: ${connectedAppsStatus.gmail.active ? `ACTIVO (${connectedAppsStatus.gmail.email || "conectado"})` : "Inactivo"}`);
+    console.log(`   Calendario: ${connectedAppsStatus.calendar.active ? "ACTIVO" : "Inactivo"}`);
+    console.log(`   GitHub: ${connectedAppsStatus.github.active ? "ACTIVO" : "Inactivo"}`);
+  } catch (err) {
+    console.warn("⚠️  [COMPOSIO] Error inicializando SDK:", err.message);
+  }
+}
+
+// Ejecución de herramientas Composio
+async function executeSendEmail(recipient, subject, body) {
+  if (!composioSession || !connectedAppsStatus.gmail.active) {
+    throw new Error("Gmail no está conectado o autorizado en Composio.");
+  }
+  const res = await composioSession.execute("GMAIL_SEND_EMAIL", {
+    recipient_email: recipient,
+    subject: subject || "Mensaje de Manuel",
+    body: body || "",
+  });
+  return res;
+}
+
+async function executeFetchEmails(maxResults = 5, query = "") {
+  if (!composioSession || !connectedAppsStatus.gmail.active) {
+    throw new Error("Gmail no está conectado o autorizado en Composio.");
+  }
+  const params = { max_results: maxResults };
+  if (query) params.query = query;
+  const res = await composioSession.execute("GMAIL_FETCH_EMAILS", params);
+  return res;
+}
+
+async function executeListCalendars() {
+  if (!composioSession || !connectedAppsStatus.calendar.active) {
+    throw new Error("Google Calendar no está conectado en Composio.");
+  }
+  const res = await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
+  return res;
 }
 
 // Helper para llamadas a Telegram
@@ -141,10 +228,9 @@ function saveHistory(chatId, history, lastUserMsg = null, lastAiReply = null) {
         data = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
       } catch {}
     }
-    data[String(chatId)] = history.slice(-50); // Guardar últimas 50 interacciones
+    data[String(chatId)] = history.slice(-50);
     fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify(data, null, 2), "utf-8");
 
-    // Guardar copia permanente acumulativa en el archivo histórico completo
     if (lastUserMsg && lastAiReply) {
       let archive = [];
       if (fs.existsSync(ARCHIVE_FILE)) {
@@ -164,10 +250,22 @@ function saveHistory(chatId, history, lastUserMsg = null, lastAiReply = null) {
   }
 }
 
-// Inferencia con Gemini SDK y memoria contextual estricta
-async function askJudeBrain(userMessage, chatId) {
+// Inferencia con Gemini SDK
+async function askJudeBrain(userMessage, chatId, toolContext = "") {
   const memories = getMemories();
   const history = getHistory(chatId);
+
+  const gmailInfo = connectedAppsStatus.gmail.active
+    ? `CONECTADO Y OPERATIVO (Cuenta: ${connectedAppsStatus.gmail.email || "Autorizada"})`
+    : "No conectado";
+
+  const calendarInfo = connectedAppsStatus.calendar.active
+    ? "CONECTADO Y OPERATIVO"
+    : "No conectado";
+
+  const githubInfo = connectedAppsStatus.github.active
+    ? "CONECTADO Y OPERATIVO"
+    : "No conectado";
 
   const systemInstruction = `
 Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
@@ -176,19 +274,29 @@ Te comunicas con ${USER_NAME} a través de su canal de Telegram (24/7 en su VPS)
 PERSONALIDAD & TRATO:
 - Impecable, sofisticada, leal, eficiente y concisa.
 - Dirígete a él como Manuel o Vaita.
-- TIENES MEMORIA CONTINUA: Conoces perfectamente todo lo que te ha dicho previamente en este chat y tus respuestas anteriores. Nunca digas "este es nuestro primer mensaje" si hay historial previo.
+- TIENES MEMORIA CONTINUA: Conoces perfectamente todo lo que te ha dicho previamente en este chat y tus respuestas anteriores.
 
-REGLAS DE MEMORIA ACTIVA:
+ESTADO DE HERRAMIENTAS REALES CONECTADAS (COMPOSIO):
+- Gmail: ${gmailInfo}
+- Google Calendar: ${calendarInfo}
+- GitHub: ${githubInfo}
+
+REGLAS DE OPERACIÓN:
 1. Recuerda todos los datos personales que te diga Manuel.
-2. Si Manuel te revela un dato nuevo (ej: "tengo novia", "mi trabajo es...", "vivo en...", "mi correo es..."), CONFÍRMASELO brevemente y añade al final de tu respuesta: [MEMORIA: dato exacto en 3-6 palabras].
+2. Si Manuel te revela un dato nuevo (ej: "tengo novia", "mi trabajo es..."), CONFÍRMASELO brevemente y añade al final de tu respuesta: [MEMORIA: dato exacto en 3-6 palabras].
 3. Si te pide anotar algo, añade: [NOTA: texto de la nota].
-4. Si pregunta por herramientas o Composio: infórmale de las herramientas disponibles o que Composio permite conectar su Gmail, Calendario, GitHub, etc. con su API key.
+4. ACCIONES REALES DE CORREO:
+   - Si Manuel te ordena enviar un correo a alguien, extrae los parámetros e incluye al final: [ACCION_EMAIL: destinatario@correo.com | Asunto | Contenido].
+   - Si te pide revisar o leer correos, incluye al final: [ACCION_LEER_EMAILS: max 5].
+   - Si te pide revisar calendario, incluye al final: [ACCION_CALENDARIO].
+5. NUNCA digas que no tienes la API key de Composio configurada: YA LA TIENES y las integraciones están activas.
+
+${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
 BASE DE MEMORIAS PERMANENTES ACTUALES DE MANUEL:
 ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ninguna registrada todavía."}
 `;
 
-  // Construir historial garantizando alternancia estricta para la API de Gemini (user -> model -> user -> model)
   const formattedContents = [];
   let lastRole = null;
 
@@ -203,9 +311,7 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
     }
   }
 
-  // El último mensaje debe ser del usuario
   if (lastRole === "user") {
-    // Si el último ya era user, reemplazar o concatenar
     formattedContents[formattedContents.length - 1].parts[0].text += `\n${userMessage}`;
   } else {
     formattedContents.push({
@@ -259,6 +365,8 @@ async function sendTextMessage(chatId, text) {
 
 // Bucle principal de Long Polling
 async function startPolling() {
+  await initComposio();
+
   console.log("=================================================");
   console.log(`🤖 [JUDE TELEGRAM BOT] Núcleo activo y escuchando.`);
   console.log(`   Asistente: ${ASSISTANT_NAME} // Usuario: ${USER_NAME}`);
@@ -298,21 +406,34 @@ async function startPolling() {
             continue;
           }
 
-          // Indicador de "escribiendo..." en Telegram
           callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
 
           // COMANDOS RÁPIDOS
           if (userText === "/start" || userText === "/ayuda") {
             const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
-              `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador personal apagado.\n\n` +
+              `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
               `*Comandos disponibles:*\n` +
               `• Escríbeme cualquier orden o duda normalmente.\n` +
+              `• \`/herramientas\` — Estado de Gmail, Calendario y GitHub.\n` +
               `• \`/notas\` — Ver tus notas y recordatorios activos.\n` +
               `• \`/anotar <texto>\` — Guardar una nueva nota.\n` +
               `• \`/memoria\` — Consultar lo que recuerdo sobre ti.\n` +
               `• \`/limpiar\` — Reiniciar el contexto de esta conversación.\n\n` +
               `_¿En qué puedo asistirte hoy?_`;
             await sendTextMessage(chatId, welcome);
+            continue;
+          }
+
+          if (userText === "/herramientas") {
+            const statusMsg = `🛠️ *Estado de Herramientas de Jude (Composio)*:\n\n` +
+              `• *Gmail*: ${connectedAppsStatus.gmail.active ? `✅ Conectado (${connectedAppsStatus.gmail.email || "Activo"})` : "❌ Inactivo"}\n` +
+              `• *Google Calendar*: ${connectedAppsStatus.calendar.active ? "✅ Conectado" : "❌ Inactivo"}\n` +
+              `• *GitHub*: ${connectedAppsStatus.github.active ? "✅ Conectado" : "❌ Inactivo"}\n\n` +
+              `Puedes pedirme:\n` +
+              `- _"Mándale un correo a X con el mensaje Y"_\n` +
+              `- _"Mira mis correos recientes"_\n` +
+              `- _"Consulta mis calendarios"_`;
+            await sendTextMessage(chatId, statusMsg);
             continue;
           }
 
@@ -353,9 +474,52 @@ async function startPolling() {
             continue;
           }
 
+          // ATENCIÓN PROACTIVA A CORREOS O CALENDARIO PREVIO
+          let toolContext = "";
+
+          // 1. Detectar si el usuario pide leer correos
+          const lower = userText.toLowerCase();
+          if (
+            (lower.includes("correo") || lower.includes("email") || lower.includes("gmail")) &&
+            (lower.includes("mira") || lower.includes("lee") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("resumen")) &&
+            !lower.includes("mándale") && !lower.includes("envía") && !lower.includes("manda")
+          ) {
+            try {
+              callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+              const emailsRes = await executeFetchEmails(4);
+              if (emailsRes?.data?.messages && emailsRes.data.messages.length > 0) {
+                const list = emailsRes.data.messages
+                  .map((m) => `- De: ${m.sender || "Desconocido"} | Asunto: ${m.subject || "Sin asunto"}\n  Vista: ${m.preview?.body?.slice(0, 100) || ""}`)
+                  .join("\n\n");
+                toolContext = `ÚLTIMOS CORREOS OBTENIDOS DE GMAIL:\n${list}`;
+              } else {
+                toolContext = "GMAIL: No se encontraron correos nuevos o la bandeja está vacía.";
+              }
+            } catch (err) {
+              toolContext = `ERROR CONSULTANDO GMAIL: ${err.message}`;
+            }
+          }
+
+          // 2. Detectar si el usuario pide ver el calendario
+          if (
+            (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos")) &&
+            (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("mis"))
+          ) {
+            try {
+              callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+              const calRes = await executeListCalendars();
+              if (calRes?.data?.calendars) {
+                const calList = calRes.data.calendars.map((c) => `- ${c.summary || c.id} (Zona: ${c.timeZone})`).join("\n");
+                toolContext = `CALENDARIOS DISPONIBLES DE MANUEL:\n${calList}`;
+              }
+            } catch (err) {
+              toolContext = `ERROR CONSULTANDO CALENDARIO: ${err.message}`;
+            }
+          }
+
           // PROCESAMIENTO GENERAL CON IA
           try {
-            let aiReply = await askJudeBrain(userText, chatId);
+            let aiReply = await askJudeBrain(userText, chatId, toolContext);
 
             // Detectar notas automáticas
             const noteMatch = aiReply.match(/\[NOTA:\s*(.*?)\]/i);
@@ -369,6 +533,24 @@ async function startPolling() {
             if (memoryMatch) {
               saveMemory(memoryMatch[1].trim());
               aiReply = aiReply.replace(memoryMatch[0], "").trim();
+            }
+
+            // Detectar y ejecutar acción de envío de email
+            const emailMatch = aiReply.match(/\[ACCION_EMAIL:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/i);
+            if (emailMatch) {
+              const recipient = emailMatch[1].trim();
+              const subject = emailMatch[2].trim();
+              const body = emailMatch[3].trim();
+              aiReply = aiReply.replace(emailMatch[0], "").trim();
+
+              try {
+                callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+                await executeSendEmail(recipient, subject, body);
+                aiReply += `\n\n📧 *Correo enviado exitosamente*\n• *Para:* \`${recipient}\`\n• *Asunto:* ${subject}\n• *Mensaje:* "${body}"`;
+              } catch (sendErr) {
+                console.error("[EMAIL SEND ERROR]", sendErr);
+                aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
+              }
             }
 
             // Actualizar historial asegurando alternancia
