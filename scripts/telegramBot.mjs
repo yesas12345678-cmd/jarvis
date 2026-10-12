@@ -192,6 +192,29 @@ async function executeFetchEmails(maxResults = 5, query = "") {
 async function executeListCalendars() {
   if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
   return await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
+// Helpers de control remoto del PC
+async function getPcStatus() {
+  try {
+    const res = await fetch("http://localhost:3001/api/pc-bridge");
+    if (res.ok) return await res.json();
+  } catch {}
+  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [] };
+}
+
+async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null) {
+  try {
+    const res = await fetch("http://localhost:3001/api/pc-bridge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "command", action, delaySeconds, taskPrompt }),
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+  return null;
+}
+
+async function sendPcCodeTask(taskPrompt) {
+  return await sendPcCommand("code_task", 0, taskPrompt);
 }
 
 // Helper para llamadas a Telegram
@@ -423,8 +446,24 @@ async function startPolling() {
 
   let offset = 0;
 
-  while (true) {
     try {
+      // Reenviar avances o tareas completadas desde el PC en casa a Telegram
+      try {
+        const pcState = await getPcStatus();
+        if (pcState.unreadProgress && pcState.unreadProgress.length > 0) {
+          for (const p of pcState.unreadProgress) {
+            await sendTextMessage(ALLOWED_USER_ID, p.message);
+          }
+        }
+        if (pcState.completed && pcState.completed.length > 0) {
+          for (const c of pcState.completed) {
+            await sendTextMessage(
+              ALLOWED_USER_ID,
+              `🏁 *[DESARROLLO EN TU PC FINALIZADO CON ÉXITO]*\n\n${c.summary}`
+            );
+          }
+        }
+      } catch {}
       const updates = await callTelegram("getUpdates", {
         offset: offset,
         timeout: 25,
@@ -455,26 +494,22 @@ async function startPolling() {
 
           callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
 
-// Helpers de control remoto del PC
-async function getPcStatus() {
-  try {
-    const res = await fetch("http://localhost:3001/api/pc-bridge");
-    if (res.ok) return await res.json();
-  } catch {}
-  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0 };
-}
-
-async function sendPcCommand(action, delaySeconds = 0) {
-  try {
-    const res = await fetch("http://localhost:3001/api/pc-bridge", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "command", action, delaySeconds }),
-    });
-    if (res.ok) return await res.json();
-  } catch {}
-  return null;
-}
+          if (userText.startsWith("/programar_en_pc ") || userText.startsWith("/pc_code ")) {
+            const prompt = userText.replace(/^\/(programar_en_pc|pc_code)\s+/, "").trim();
+            if (prompt) {
+              const pc = await getPcStatus();
+              if (!pc.online) {
+                await sendTextMessage(chatId, `🔴 *Tu PC en casa está APAGADO.*\nPara programar este proyecto en el servidor VPS, escribe: \`/programar ${prompt}\``);
+              } else {
+                await sendPcCodeTask(prompt);
+                await sendTextMessage(
+                  chatId,
+                  `🚀 *Orden enviada a tu PC en casa*\n\n🎯 *Objetivo:* _${prompt}_\n\nTu ordenador ha tomado el control y está programando el proyecto. Te iré notificando cada avance aquí en directo.`
+                );
+              }
+            }
+            continue;
+          }
 
           // COMANDOS RÁPIDOS
           if (userText === "/start" || userText === "/ayuda") {

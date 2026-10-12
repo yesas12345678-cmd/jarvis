@@ -20,6 +20,8 @@ function readPcState() {
     hostname: "PC-Manuel",
     commands: [],
     history: [],
+    progressUpdates: [],
+    completedTasks: [],
   };
 }
 
@@ -31,12 +33,20 @@ function writePcState(state: any) {
   }
 }
 
-// GET: Consulta el estado del PC (Online u Offline)
+// GET: Consulta el estado del PC y tareas en curso
 export async function GET() {
   const state = readPcState();
   const now = Date.now();
-  // Si no ha enviado señal en los últimos 20 segundos, el PC está apagado
   const isOnline = now - (state.lastSeen || 0) < 20000;
+
+  // Extraer mensajes de progreso no leídos
+  const unreadProgress = [...(state.progressUpdates || [])];
+  state.progressUpdates = []; // limpiar leídos
+
+  // Extraer tareas completadas pendientes
+  const completed = [...(state.completedTasks || [])];
+  state.completedTasks = []; // limpiar entregadas
+  writePcState(state);
 
   return NextResponse.json({
     online: isOnline,
@@ -44,10 +54,12 @@ export async function GET() {
     hostname: state.hostname || "PC-Manuel",
     secondsAgo: state.lastSeen ? Math.round((now - state.lastSeen) / 1000) : null,
     pendingCommands: state.commands?.length || 0,
+    unreadProgress,
+    completed,
   });
 }
 
-// POST: Maneja tanto el Heartbeat del PC como órdenes enviadas desde Telegram
+// POST: Maneja Heartbeat, órdenes de Telegram y reportes de progreso del PC
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -70,13 +82,38 @@ export async function POST(req: Request) {
       });
     }
 
-    // 2. Encolar orden de apagado o control (enviada desde Telegram)
+    // 2. Reporte de progreso de desarrollo enviado desde el PC
+    if (body.type === "progress") {
+      if (!state.progressUpdates) state.progressUpdates = [];
+      state.progressUpdates.push({
+        taskId: body.taskId,
+        message: body.message,
+        timestamp: new Date().toISOString(),
+      });
+      writePcState(state);
+      return NextResponse.json({ status: "ok" });
+    }
+
+    // 3. Tarea completada reportada por el PC
+    if (body.type === "task_complete") {
+      if (!state.completedTasks) state.completedTasks = [];
+      state.completedTasks.push({
+        taskId: body.taskId,
+        summary: body.summary,
+        timestamp: new Date().toISOString(),
+      });
+      writePcState(state);
+      return NextResponse.json({ status: "ok" });
+    }
+
+    // 4. Encolar orden (apagado, reinicio o tarea de programación autónoma)
     if (body.type === "command") {
       if (!state.commands) state.commands = [];
       const newCmd = {
         id: Date.now().toString(),
-        action: body.action, // "shutdown" | "cancel_shutdown" | "restart"
+        action: body.action, // "shutdown" | "cancel_shutdown" | "code_task"
         delaySeconds: body.delaySeconds || 0,
+        taskPrompt: body.taskPrompt || null,
         createdAt: new Date().toISOString(),
       };
       state.commands.push(newCmd);
