@@ -201,6 +201,32 @@ async function handleCommand(cmd) {
     await sendTaskCompletion(cmd.id, `💻 *Comando en tu PC:* \`${cmd.command}\`\n\`\`\`\n${out}\n\`\`\``);
     return;
   }
+
+  // 7. Gestión Autónoma de Obsidian (Segundo Cerebro)
+  if (cmd.action === "obsidian_note") {
+    const vaultPath = "C:\\PROYECTOS\\Segundo Cerebro";
+    const folder = cmd.folder || "05 - Diario";
+    const filename = cmd.filename || `Nota_${new Date().toISOString().slice(0, 10)}.md`;
+    const targetDir = path.join(vaultPath, folder);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    const fullPath = path.join(targetDir, filename.endsWith(".md") ? filename : `${filename}.md`);
+    const content = cmd.content || "";
+    
+    try {
+      if (cmd.mode === "append" && fs.existsSync(fullPath)) {
+        fs.appendFileSync(fullPath, `\n\n${content}`, "utf-8");
+      } else {
+        fs.writeFileSync(fullPath, content, "utf-8");
+      }
+      console.log(`🧠 [OBSIDIAN NOTA ACTUALIZADA]: ${fullPath}`);
+      await sendTaskCompletion(cmd.id, `🧠 *Nota registrada en tu Segundo Cerebro:* \`${folder}/${filename}\``);
+    } catch (e) {
+      await sendTaskCompletion(cmd.id, `⚠️ Error al escribir nota en Obsidian: ${e.message}`);
+    }
+    return;
+  }
 }
 
 function getProyectosList() {
