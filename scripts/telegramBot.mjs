@@ -234,6 +234,33 @@ async function callTelegram(method, params = {}) {
   }
 }
 
+// Helper para descargar archivos multimedia de Telegram (fotos, notas de voz, audios)
+async function downloadTelegramFile(fileId) {
+  try {
+    const fileInfo = await callTelegram("getFile", { file_id: fileId });
+    if (!fileInfo || !fileInfo.ok || !fileInfo.result?.file_path) {
+      console.warn("[TELEGRAM FILE] No se pudo obtener la ruta del archivo:", fileInfo);
+      return null;
+    }
+    const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileInfo.result.file_path}`;
+    const res = await fetch(downloadUrl);
+    if (!res.ok) {
+      console.warn(`[TELEGRAM FILE] Error HTTP ${res.status} al descargar ${downloadUrl}`);
+      return null;
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    return {
+      buffer,
+      base64: buffer.toString("base64"),
+      filePath: fileInfo.result.file_path,
+    };
+  } catch (err) {
+    console.error("[TELEGRAM FILE ERROR]:", err.message);
+    return null;
+  }
+}
+
 // Helpers de almacenamiento persistente
 function getMemories() {
   try {
@@ -325,8 +352,8 @@ function saveHistory(chatId, history, lastUserMsg = null, lastAiReply = null) {
   }
 }
 
-// Inferencia con Gemini SDK
-async function askJudeBrain(userMessage, chatId, toolContext = "") {
+// Inferencia con Gemini SDK (admite texto, imágenes y audio/voz)
+async function askJudeBrain(userMessage, chatId, toolContext = "", mediaPart = null) {
   await syncConnectedApps();
 
   const memories = getMemories();
@@ -339,6 +366,11 @@ async function askJudeBrain(userMessage, chatId, toolContext = "") {
   const systemInstruction = `
 Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
 Te comunicas con ${USER_NAME} a través de su canal de Telegram (24/7 en su VPS).
+
+CAPACIDADES MULTIMODAL:
+- Puedes ver, analizar y describir con total precisión cualquier imagen o captura de pantalla que Manuel te envíe.
+- Puedes escuchar y responder a mensajes de audio y notas de voz que te envíe.
+- Responde de forma natural y conversacional tanto al texto como a lo que observes o escuches.
 
 PERSONALIDAD & TRATO:
 - Impecable, sofisticada, leal, eficiente y concisa.
@@ -383,16 +415,22 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
     }
   }
 
+  const userParts = [];
+  if (mediaPart) {
+    userParts.push(mediaPart);
+  }
+  userParts.push({ text: userMessage });
+
   if (lastRole === "user") {
-    formattedContents[formattedContents.length - 1].parts[0].text += `\n${userMessage}`;
+    formattedContents[formattedContents.length - 1].parts.push(...userParts);
   } else {
     formattedContents.push({
       role: "user",
-      parts: [{ text: userMessage }],
+      parts: userParts,
     });
   }
 
-  const availableModels = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
+  const availableModels = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
   let lastError = null;
 
   for (const modelName of availableModels) {
@@ -515,14 +553,69 @@ async function startPolling() {
         for (const update of updates.result) {
           offset = update.update_id + 1;
 
-          if (!update.message || !update.message.text) continue;
+          if (!update.message) continue;
 
           const msg = update.message;
           const chatId = msg.chat.id;
           const senderId = String(msg.from.id);
-          const userText = msg.text.trim();
+          let userText = (msg.text || msg.caption || "").trim();
+          let mediaPart = null;
 
-          console.log(`[TELEGRAM] Mensaje de ${msg.from.first_name || "Manuel"} (${senderId}): "${userText}"`);
+          // 1. Detección y descarga de imágenes / fotos
+          if (msg.photo && msg.photo.length > 0) {
+            const bestPhoto = msg.photo[msg.photo.length - 1];
+            callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+            const fileData = await downloadTelegramFile(bestPhoto.file_id);
+            if (fileData) {
+              mediaPart = {
+                inlineData: {
+                  data: fileData.base64,
+                  mimeType: "image/jpeg",
+                },
+              };
+              if (!userText) {
+                userText = "Analiza y describe esta imagen en detalle y responde con lo que observes o se solicite.";
+              }
+            }
+          }
+
+          // 2. Detección y descarga de notas de voz
+          if (msg.voice) {
+            callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+            const fileData = await downloadTelegramFile(msg.voice.file_id);
+            if (fileData) {
+              mediaPart = {
+                inlineData: {
+                  data: fileData.base64,
+                  mimeType: "audio/ogg",
+                },
+              };
+              if (!userText) {
+                userText = "Escucha atentamente este mensaje de audio/nota de voz y respóndeme con claridad.";
+              }
+            }
+          }
+
+          // 3. Detección y descarga de archivos de audio
+          if (msg.audio) {
+            callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+            const fileData = await downloadTelegramFile(msg.audio.file_id);
+            if (fileData) {
+              mediaPart = {
+                inlineData: {
+                  data: fileData.base64,
+                  mimeType: msg.audio.mime_type || "audio/mp3",
+                },
+              };
+              if (!userText) {
+                userText = "Escucha este archivo de audio y procesa su contenido.";
+              }
+            }
+          }
+
+          if (!userText && !mediaPart) continue;
+
+          console.log(`[TELEGRAM] Mensaje de ${msg.from.first_name || "Manuel"} (${senderId}): "${userText}" ${mediaPart ? `[MULTIMEDIA: ${mediaPart.inlineData.mimeType}]` : ""}`);
 
           // Comprobación de seguridad
           if (ALLOWED_USER_ID && senderId !== String(ALLOWED_USER_ID)) {
@@ -817,9 +910,9 @@ async function startPolling() {
             }
           }
 
-          // PROCESAMIENTO GENERAL CON IA
+          // PROCESAMIENTO GENERAL CON IA (Texto + Imágenes + Audios/Notas de voz)
           try {
-            let aiReply = await askJudeBrain(userText, chatId, toolContext);
+            let aiReply = await askJudeBrain(userText, chatId, toolContext, mediaPart);
 
             // Detectar notas automáticas
             const noteMatch = aiReply.match(/\[NOTA:\s*(.*?)\]/i);
