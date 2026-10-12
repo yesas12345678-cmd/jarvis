@@ -590,19 +590,31 @@ async function startPolling() {
           if (userText.startsWith("/code ") || userText.startsWith("/programar ")) {
             const prompt = userText.replace(/^\/(code|programar)\s+/, "").trim();
             if (prompt) {
-              await sendTextMessage(chatId, `🚀 *Modo Agente Programador Activado*\n\n🎯 *Objetivo:* _${prompt}_\n\nIniciando desarrollo autónomo en el servidor VPS...`);
-              try {
-                const summary = await runAutonomousCodingAgent({
-                  taskPrompt: prompt,
-                  geminiApiKey: GEMINI_API_KEY,
-                  composioSession,
-                  onProgress: async (update) => {
-                    await sendTextMessage(chatId, update);
-                  },
-                });
-                await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
-              } catch (agentErr) {
-                await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+              const pc = await getPcStatus();
+              if (pc.online) {
+                await sendPcCodeTask(prompt);
+                await sendTextMessage(
+                  chatId,
+                  `🚀 *[ANTIGRAVITY EN TU PC]* Tarea asignada a tu ordenador.\n\n🎯 *Objetivo:* _${prompt}_\n\n💻 Ejecutando con el SDK de Antigravity en tu entorno local. Te iré reportando el progreso aquí en directo.`
+                );
+              } else {
+                await sendTextMessage(
+                  chatId,
+                  `💻 *Tu PC está apagado.* Iniciando desarrollo en el servidor VPS de respaldo...\n\n🎯 *Objetivo:* _${prompt}_`
+                );
+                try {
+                  const summary = await runAutonomousCodingAgent({
+                    taskPrompt: prompt,
+                    geminiApiKey: GEMINI_API_KEY,
+                    composioSession,
+                    onProgress: async (update) => {
+                      await sendTextMessage(chatId, update);
+                    },
+                  });
+                  await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
+                } catch (agentErr) {
+                  await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+                }
               }
             }
             continue;
