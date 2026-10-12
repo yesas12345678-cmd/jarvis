@@ -5,7 +5,6 @@ import {
   AssistantState,
   USER_NAME,
   ASSISTANT_NAME,
-  ASSISTANT_PRONUNCIATION,
   CoreTheme,
   THEMES,
 } from "@/lib/constants";
@@ -63,7 +62,7 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
         };
       default:
         return {
-          text: isHandsFree ? "STANDBY // ESCUCHA 'YUD' ACTIVA" : "STANDBY // PUSH-TO-TALK LISTO",
+          text: isHandsFree ? "STANDBY // ESCUCHA 'JUDE' ACTIVA" : "STANDBY // PUSH-TO-TALK LISTO",
           style: {
             color: isHandsFree ? activePalette.secondary : "#888888",
             borderColor: isHandsFree ? activePalette.border : "rgba(255,255,255,0.1)",
@@ -85,7 +84,7 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
         <div className="flex items-center gap-2">
           <Cpu className="w-3.5 h-3.5" style={{ color: activePalette.secondary }} />
           <span className="tracking-widest uppercase text-neutral-300 font-semibold">
-            {ASSISTANT_NAME} ({ASSISTANT_PRONUNCIATION}) OS v4.2
+            {ASSISTANT_NAME} OS v4.2
           </span>
           <span className="text-neutral-600">//</span>
           <span className="tracking-wider font-bold" style={{ color: activePalette.secondary }}>
@@ -119,7 +118,7 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
             </span>
             <span>
               {isHandsFree
-                ? "MANOS LIBRES ACTIVO (DI 'YUD')"
+                ? "MANOS LIBRES ACTIVO (DI 'JUDE')"
                 : isPushToTalkActive
                 ? "MICRÓFONO EN VIVO"
                 : "PUSH-TO-TALK LISTO"}
@@ -131,7 +130,7 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
             ) : (
               <span className="text-neutral-500 italic">
                 {isHandsFree
-                  ? `Di directamente: "Yud, ¿qué hora es?", "Yud, pon temporizador..." o "Yud, modo combate"`
+                  ? `Di directamente: "Jude, ¿qué hora es?", "Jude, pon temporizador..." o "Jude, modo combate"`
                   : `Mantén presionado el botón central o presiona la barra espaciadora para hablar con ${ASSISTANT_NAME}...`}
               </span>
             )}
@@ -160,7 +159,7 @@ export const StatusReadout: React.FC<StatusReadoutProps> = ({
               </span>
             ) : (
               <span className="text-neutral-500 italic">
-                {ASSISTANT_NAME} está en reposo. Di algo como: &quot;Yud, prepara un correo&quot; o &quot;Yud, ¿qué tiempo hace en Madrid?&quot;
+                {ASSISTANT_NAME} está en reposo. Di algo como: &quot;Jude, prepara un correo&quot; o &quot;Jude, ¿qué tiempo hace en Madrid?&quot;
               </span>
             )}
           </p>

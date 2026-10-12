@@ -99,7 +99,7 @@ export const NotesDrawer: React.FC<NotesDrawerProps> = ({
         <div className="flex flex-col gap-2.5 max-h-64 overflow-y-auto pr-1">
           {notes.length === 0 ? (
             <div className="text-center py-8 text-white/40 text-xs font-mono">
-              NO HAY NOTAS ACTIVAS. DI "YUD, ANOTA QUE..." O AGREGA UNA MANUALMENTE.
+              NO HAY NOTAS ACTIVAS. DI "JUDE, ANOTA QUE..." O AGREGA UNA MANUALMENTE.
             </div>
           ) : (
             notes.map((note, idx) => (

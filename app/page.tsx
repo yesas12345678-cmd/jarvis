@@ -12,7 +12,6 @@ import { soundEngine } from "@/lib/soundEngine";
 import {
   USER_NAME,
   ASSISTANT_NAME,
-  ASSISTANT_PRONUNCIATION,
   LANGUAGE,
   AssistantState,
   ActionPayload,
@@ -50,7 +49,7 @@ export default function AssistantPage() {
   const [theme, setTheme] = useState<CoreTheme>("mark3");
   const [transcript, setTranscript] = useState<string>("" );
   const [lastReply, setLastReply] = useState<string>("");
-  const [readoutText, setReadoutText] = useState<string>("SISTEMAS SINCRONIZADOS // DI 'YUD'");
+  const [readoutText, setReadoutText] = useState<string>("SISTEMAS SINCRONIZADOS // DI 'JUDE'");
   const [inputText, setInputText] = useState<string>("");
   const [activeAction, setActiveAction] = useState<ActionPayload | null>(null);
   const [audioLevel, setAudioLevel] = useState<number>(0);
@@ -404,7 +403,7 @@ export default function AssistantPage() {
             soundEngine.playWakeChime();
             setState("listening");
             stateRef.current = "listening";
-            setReadoutText("NÚCLEO ACTIVADO // DI 'YUD'");
+            setReadoutText("NÚCLEO ACTIVADO // DI 'JUDE'");
 
             // Extraer lo que dijo después de la llamada
             const commandAfter = heardText
@@ -504,7 +503,7 @@ export default function AssistantPage() {
         recognitionRef.current?.start();
       } catch {}
       soundEngine.playActionConfirm();
-      setReadoutText("MANOS LIBRES ACTIVO // DI 'YUD'");
+      setReadoutText("MANOS LIBRES ACTIVO // DI 'JUDE'");
     } else {
       stopSpeaking();
       recognitionRef.current?.stop();
@@ -660,7 +659,7 @@ export default function AssistantPage() {
           stateRef.current = "idle";
           setAudioLevel(0);
           setReadoutText(
-            isHandsFree ? "STANDBY // ESCUCHANDO: DI 'YUD'..." : "STANDBY // NÚCLEO LISTO"
+            isHandsFree ? "STANDBY // ESCUCHANDO: DI 'JUDE'..." : "STANDBY // NÚCLEO LISTO"
           );
           URL.revokeObjectURL(audioUrl);
         };
@@ -702,7 +701,7 @@ export default function AssistantPage() {
       stateRef.current = "idle";
       setAudioLevel(0);
       setReadoutText(
-        isHandsFree ? "STANDBY // ESCUCHANDO: DI 'YUD'..." : "STANDBY // NÚCLEO LISTO"
+        isHandsFree ? "STANDBY // ESCUCHANDO: DI 'JUDE'..." : "STANDBY // NÚCLEO LISTO"
       );
     };
     utterance.onerror = () => {
@@ -744,9 +743,6 @@ export default function AssistantPage() {
               style={{ color: activePalette.primary }}
             >
               {ASSISTANT_NAME}
-              <span className="text-xs font-normal opacity-70 font-mono">
-                [{ASSISTANT_PRONUNCIATION}]
-              </span>
             </h1>
             <p className="text-[11px] text-neutral-400 font-mono">
               NÚCLEO CUÁNTICO // {USER_NAME} // {activePalette.badge}
@@ -879,7 +875,7 @@ export default function AssistantPage() {
                 : state === "processing"
                 ? "PROCESANDO INTENCIÓN..."
                 : isHandsFree
-                ? "DI 'YUD' O PULSA EL NÚCLEO"
+                ? "DI 'JUDE' O PULSA EL NÚCLEO"
                 : "PULSA Y MANTÉN PARA HABLAR"}
             </span>
           </div>
@@ -924,7 +920,7 @@ export default function AssistantPage() {
               onChange={(e) => setInputText(e.target.value)}
               placeholder={
                 isHandsFree
-                  ? `Habla con "Yud..." o escribe una orden para ${ASSISTANT_NAME}...`
+                  ? `Habla con "Jude..." o escribe una orden para ${ASSISTANT_NAME}...`
                   : `Escribe o presiona el micrófono para hablar con ${ASSISTANT_NAME}...`
               }
               className="w-full bg-black/60 border rounded-xl px-4 py-3 text-sm text-neutral-100 placeholder-neutral-500 font-body focus:outline-none transition-all duration-300"
