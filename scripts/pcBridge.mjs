@@ -20,7 +20,8 @@ console.log("=================================================");
 
 function executeSystemCommand(cmd) {
   return new Promise((resolve) => {
-    exec(cmd, (error, stdout, stderr) => {
+    const isWin = process.platform === "win32";
+    exec(cmd, isWin ? { shell: "powershell.exe" } : {}, (error, stdout, stderr) => {
       resolve({ success: !error, stdout, stderr, code: error ? error.code : 0 });
     });
   });
