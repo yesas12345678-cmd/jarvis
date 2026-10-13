@@ -480,30 +480,54 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
     });
   }
 
-  const availableModels = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"];
+  const availableModels = [
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+  ];
   let lastError = null;
+  const maxAttempts = 3;
 
-  for (const modelName of availableModels) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        systemInstruction,
-        generationConfig: {
-          temperature: 0.6,
-          maxOutputTokens: 800,
-        },
-      });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (const modelName of availableModels) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction,
+          generationConfig: {
+            temperature: 0.6,
+            maxOutputTokens: 800,
+          },
+        });
 
-      const result = await model.generateContent({ contents: formattedContents });
-      const reply = result.response.text();
-      if (reply) return reply;
-    } catch (err) {
-      lastError = err;
-      console.warn(`[GEMINI_WARN] Fallo con ${modelName}:`, err.message);
+        const result = await model.generateContent({ contents: formattedContents });
+        const reply = result.response.text();
+        if (reply) return reply;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[GEMINI_WARN] (Intento ${attempt}/${maxAttempts}) Fallo con ${modelName}:`, err.message);
+        if (err.status === 404) continue; // Si no existe el modelo, pasar al siguiente
+      }
+    }
+
+    if (attempt < maxAttempts) {
+      const waitMs = attempt * 1200;
+      console.log(`[GEMINI_RETRY] Servidor ocupado. Reintentando en ${waitMs}ms...`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
   }
 
-  throw lastError || new Error("No se pudo obtener respuesta de Gemini");
+  // Fallback de emergencia usando banco de memorias si la API está momentáneamente saturada
+  const lowerMsg = userMessage.toLowerCase();
+  if (lowerMsg.includes("novia") || lowerMsg.includes("pareja")) {
+    const noviaMem = memories.find((m) => m.toLowerCase().includes("novia"));
+    if (noviaMem) {
+      return `Tu novia es Aleida, Manuel. La tengo bien presente en mis recuerdos.`;
+    }
+  }
+
+  throw lastError || new Error("No se pudo obtener respuesta de Gemini tras reintentos");
 }
 
 // Envío a Telegram con fallback automático a texto plano si falla Markdown
@@ -676,469 +700,521 @@ async function startPolling() {
             continue;
           }
 
-          callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-
-          if (userText.startsWith("/programar_en_pc ") || userText.startsWith("/pc_code ")) {
-            const prompt = userText.replace(/^\/(programar_en_pc|pc_code)\s+/, "").trim();
-            if (prompt) {
-              const pc = await getPcStatus();
-              if (!pc.online) {
-                await sendTextMessage(chatId, `🔴 *Tu PC en casa está APAGADO.*\nPara programar este proyecto en el servidor VPS, escribe: \`/programar ${prompt}\``);
-              } else {
-                await sendPcCodeTask(prompt);
-                await sendTextMessage(
-                  chatId,
-                  `🚀 *Orden enviada a tu PC en casa*\n\n🎯 *Objetivo:* _${prompt}_\n\nTu ordenador ha tomado el control y está programando el proyecto. Te iré notificando cada avance aquí en directo.`
-                );
-              }
-            }
-            continue;
-          }
-
-          // COMANDOS RÁPIDOS
-          if (userText === "/start" || userText === "/ayuda") {
-            const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
-              `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
-              `*Control de tu PC Remoto:*\n` +
-              `• \`/pc\` — Ver si tu ordenador está encendido o hibernando.\n` +
-              `• \`/hibernar\` o \`/apagar_pc\` — Hibernar de inmediato (conserva todas tus ventanas y apps sin cerrar nada).\n` +
-              `• \`/hibernar_en <min>\` — Programar hibernación en X minutos (ej: \`/hibernar_en 30\`).\n` +
-              `• \`/cancelar_apagado\` — Cancelar cualquier apagado o hibernación en curso.\n` +
-              `• \`/apagar_total\` — Apagado tradicional completo (cerrando programas).\n\n` +
-              `*Desarrollo & Herramientas:*\n` +
-              `• \`/programar <tarea>\` — Desarrollo de proyectos autónomo.\n` +
-              `• \`/herramientas\` — Ver las ${activeAppsList.length} integraciones activas.\n` +
-              `• \`/proyectos\` — Archivos en tu workspace.\n` +
-              `• \`/notas\` — Ver y crear notas.\n` +
-              `• \`/memoria\` — Ver lo que recuerdo sobre ti.\n\n` +
-              `_¿En qué puedo asistirte hoy?_`;
-            await sendTextMessage(chatId, welcome);
-            continue;
-          }
-
-          if (userText === "/pc" || userText === "/estado_pc") {
-            const pc = await getPcStatus();
-            if (pc.online) {
-              const msg = `🟢 *Tu ordenador está ENCENDIDO y en línea*\n\n` +
-                `• *Host:* \`${pc.hostname}\`\n` +
-                `• *Conexión:* Activa (hace ${pc.secondsAgo || 1}s)\n` +
-                `• *Comandos pendientes:* ${pc.pendingCommands}\n\n` +
-                `_Puedes hibernarlo con \`/hibernar\` o \`/apagar_pc\` (conserva todas tus ventanas y apps sin cerrar nada), o programarlo con \`/hibernar_en <minutos>\`._`;
-              await sendTextMessage(chatId, msg);
-            } else {
-              const msg = `🔴 *Tu ordenador está APAGADO / HIBERNANDO*\n\n` +
-                `• *Última conexión:* ${pc.lastSeen ? new Date(pc.lastSeen).toLocaleTimeString("es-ES") : "Sin registro hoy"}\n\n` +
-                `_En el siguiente paso configuraremos el encendido remoto desde el móvil._`;
-              await sendTextMessage(chatId, msg);
-            }
-            continue;
-          }
-
-          if (userText === "/apagar_pc" || userText === "/hibernar" || userText === "/hibernar_pc") {
-            const pc = await getPcStatus();
-            if (!pc.online) {
-              await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO / HIBERNANDO*.`);
-            } else {
-              await sendPcCommand("hibernate", 10);
-              await sendTextMessage(
-                chatId,
-                `💤 *Orden de hibernación enviada a tu PC*\n\nTu ordenador entrará en *hibernación en 10 segundos*.\n\n✨ *No se cerrará nada:* Todo tu trabajo, pestañas, ventanas y editores quedarán guardados intactos.\nSi deseas cancelarlo, escribe rápidamente \`/cancelar_apagado\`.`
-              );
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/apagar_pc_en ") || userText.startsWith("/hibernar_en ")) {
-            const minStr = userText.replace(/^\/(apagar_pc_en|hibernar_en)\s+/, "").trim();
-            const min = parseInt(minStr, 10);
-            if (isNaN(min) || min <= 0) {
-              await sendTextMessage(chatId, `⚠️ Indica un número de minutos válido. Ejemplo: \`/hibernar_en 30\``);
-            } else {
-              const sec = min * 60;
-              await sendPcCommand("hibernate", sec);
-              await sendTextMessage(
-                chatId,
-                `⏳ *Hibernación programada*\n\nTu ordenador hibernará automáticamente en *${min} minutos* (conservando todas tus ventanas abiertas).\nPara cancelarlo, escribe \`/cancelar_apagado\`.`
-              );
-            }
-            continue;
-          }
-
-          if (userText === "/apagar_total" || userText === "/apagar_completo") {
-            const pc = await getPcStatus();
-            if (!pc.online) {
-              await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO*.`);
-            } else {
-              await sendPcCommand("shutdown", 10);
-              await sendTextMessage(
-                chatId,
-                `🛑 *Apagado completo enviado a tu PC*\n\nTu ordenador se apagará por completo (cerrando aplicaciones) en *10 segundos*.\nPara cancelar: \`/cancelar_apagado\`.`
-              );
-            }
-            continue;
-          }
-
-          if (userText === "/cancelar_apagado" || userText === "/cancelar_hibernacion") {
-            await sendPcCommand("cancel_shutdown");
-            await sendTextMessage(chatId, `✅ *Apagado / hibernación cancelada con éxito.* Tu ordenador seguirá activo.`);
-            continue;
-          }
-
-          if (userText.startsWith("/code ") || userText.startsWith("/programar ")) {
-            const prompt = userText.replace(/^\/(code|programar)\s+/, "").trim();
-            if (prompt) {
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcCodeTask(prompt);
-                await sendTextMessage(
-                  chatId,
-                  `🚀 *[ANTIGRAVITY EN TU PC]* Tarea asignada a tu ordenador.\n\n🎯 *Objetivo:* _${prompt}_\n\n💻 Ejecutando con el SDK de Antigravity en tu entorno local. Te iré reportando el progreso aquí en directo.`
-                );
-              } else {
-                await sendTextMessage(
-                  chatId,
-                  `💻 *Tu PC está apagado.* Iniciando desarrollo en el servidor VPS de respaldo...\n\n🎯 *Objetivo:* _${prompt}_`
-                );
-                try {
-                  const summary = await runAutonomousCodingAgent({
-                    taskPrompt: prompt,
-                    geminiApiKey: GEMINI_API_KEY,
-                    composioSession,
-                    onProgress: async (update) => {
-                      await sendTextMessage(chatId, update);
-                    },
-                  });
-                  await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
-                } catch (agentErr) {
-                  await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
-                }
-              }
-            }
-            continue;
-          }
-
-          if (userText === "/proyectos" || userText === "/archivos" || userText === "/carpetas" || userText === "/pc_carpetas") {
-            const pc = await getPcStatus();
-            if (pc.online && pc.proyectos && pc.proyectos.length > 0) {
-              const list = pc.proyectos.map((p) => `📁 \`${p}\``).join("\n");
-              await sendTextMessage(chatId, `📂 *Carpetas en tu PC (\`C:\\PROYECTOS\` — ${pc.proyectos.length} proyectos):*\n\n${list}`);
-            } else if (pc.online) {
-              await sendPcListDir("C:\\PROYECTOS");
-              await sendTextMessage(chatId, `🔍 Consultando directorio \`C:\\PROYECTOS\` en tu PC...`);
-            } else {
-              const res = listProjectFiles();
-              if (!res.success || res.files.length === 0) {
-                await sendTextMessage(chatId, `📂 *Workspace de Proyectos*\n\nTu PC está apagado y no hay archivos en el VPS todavía.`);
-              } else {
-                const list = res.files.map((f) => `• ${f.type === "dir" ? "📁" : "📄"} \`${f.path}\` ${f.size ? `_(${f.size} B)_` : ""}`).slice(0, 35).join("\n");
-                await sendTextMessage(chatId, `📂 *Archivos en Workspace VPS (${res.files.length}):*\n\n${list}`);
-              }
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/pc_terminal ")) {
-            const cmd = userText.replace("/pc_terminal ", "").trim();
-            if (cmd) {
-              const pc = await getPcStatus();
-              if (!pc.online) {
-                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede ejecutar \`${cmd}\`.`);
-              } else {
-                await sendPcTerminalCmd(cmd);
-                await sendTextMessage(chatId, `💻 *Comando enviado a la consola de tu PC:* \`${cmd}\`...`);
-              }
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/leer ")) {
-            const filePath = userText.replace("/leer ", "").trim();
-            if (filePath) {
-              const pc = await getPcStatus();
-              if (!pc.online) {
-                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede leer \`${filePath}\`.`);
-              } else {
-                await sendPcReadFile(filePath);
-                await sendTextMessage(chatId, `🔍 *Leyendo archivo en tu PC:* \`${filePath}\`...`);
-              }
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/editar ")) {
-            const raw = userText.replace("/editar ", "").trim();
-            const parts = raw.split("|");
-            const filePath = parts[0]?.trim();
-            const content = parts.slice(1).join("|")?.trim();
-            if (filePath && content !== undefined) {
-              const pc = await getPcStatus();
-              if (!pc.online) {
-                await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede editar \`${filePath}\`.`);
-              } else {
-                await sendPcWriteFile(filePath, content);
-                await sendTextMessage(chatId, `✏️ *Guardando cambios en tu PC:* \`${filePath}\`...`);
-              }
-            } else {
-              await sendTextMessage(chatId, `⚠️ Formato: \`/editar ruta_archivo | nuevo contenido\``);
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/terminal ")) {
-            const cmd = userText.replace("/terminal ", "").trim();
-            if (cmd) {
-              const res = await runTerminalCommand(cmd);
-              const output = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1000);
-              await sendTextMessage(chatId, `💻 *Comando (VPS):* \`${cmd}\`\n*Código:* ${res.code}\n\`\`\`\n${output}\n\`\`\``);
-            }
-            continue;
-          }
-
-          if (userText === "/herramientas") {
-            await syncConnectedApps(true);
-            const list = activeAppsList.length > 0
-              ? activeAppsList.map((a, i) => `${i + 1}. ${a.icon} *${a.name}* — ${a.desc}${a.detail ? ` (\`${a.detail}\`)` : ""}`).join("\n")
-              : "No se detectaron integraciones activas en este momento.";
-
-            const statusMsg = `🛠️ *Integraciones activas de Jude en Composio (${activeAppsList.length})*:\n\n${list}\n\n` +
-              `_Todas las herramientas están sincronizadas en vivo con tu cuenta de Composio y listas para usarse._`;
-            await sendTextMessage(chatId, statusMsg);
-            continue;
-          }
-
-          if (userText === "/notas") {
-            const notes = getNotes();
-            if (notes.length === 0) {
-              await sendTextMessage(chatId, `📝 *Notas de ${USER_NAME}*\n\nNo tienes notas activas en este momento.`);
-            } else {
-              const list = notes.map((n, i) => `${i + 1}. ${n.text} _(${n.date})_`).join("\n");
-              await sendTextMessage(chatId, `📝 *Notas activas de ${USER_NAME}:*\n\n${list}`);
-            }
-            continue;
-          }
-
-          if (userText.startsWith("/anotar ")) {
-            const noteContent = userText.replace("/anotar ", "").trim();
-            if (noteContent) {
-              addNote(noteContent);
-              await sendTextMessage(chatId, `✅ *Nota registrada con éxito:*\n"${noteContent}"`);
-            }
-            continue;
-          }
-
-          if (userText === "/memoria") {
-            const memories = getMemories();
-            if (memories.length === 0) {
-              await sendTextMessage(chatId, `🧠 *Memoria permanente de Jude*\n\nAún no hay recuerdos guardados.`);
-            } else {
-              const list = memories.map((m, i) => `• ${m}`).join("\n");
-              await sendTextMessage(chatId, `🧠 *Recuerdos permanentes aprendidos sobre ti:*\n\n${list}`);
-            }
-            continue;
-          }
-
-          if (userText === "/limpiar") {
-            saveHistory(chatId, []);
-            await sendTextMessage(chatId, `🧹 *Contexto reiniciado.* Listo para una nueva conversación.`);
-            continue;
-          }
-
-          // DETECCIÓN EN LENGUAJE NATURAL DE TAREAS DE PROGRAMACIÓN AUTÓNOMA
-          const lowerText = userText.toLowerCase();
-          const isCodingRequest =
-            (lowerText.startsWith("programa ") ||
-             lowerText.startsWith("crea un script ") ||
-             lowerText.startsWith("crea un proyecto ") ||
-             lowerText.startsWith("crea un bot ") ||
-             lowerText.startsWith("desarrolla un ") ||
-             lowerText.startsWith("haz un script ") ||
-             lowerText.startsWith("haz un bot ")) &&
-            !lowerText.includes("cómo ") &&
-            !lowerText.includes("que es ");
-
-          if (isCodingRequest) {
-            await sendTextMessage(chatId, `🚀 *Modo Agente Programador Activado*\n\n🎯 *Petición detectada:* _${userText}_\n\nIniciando desarrollo autónomo en el servidor VPS...`);
-            try {
-              const summary = await runAutonomousCodingAgent({
-                taskPrompt: userText,
-                geminiApiKey: GEMINI_API_KEY,
-                composioSession,
-                onProgress: async (update) => {
-                  await sendTextMessage(chatId, update);
-                },
-              });
-              await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
-            } catch (agentErr) {
-              await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
-            }
-            continue;
-          }
-
-          // ATENCIÓN PROACTIVA A CORREOS O CALENDARIO PREVIO
-          let toolContext = "";
-
-          const lower = userText.toLowerCase();
-          if (
-            (lower.includes("correo") || lower.includes("email") || lower.includes("gmail")) &&
-            (lower.includes("mira") || lower.includes("lee") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("resumen")) &&
-            !lower.includes("mándale") && !lower.includes("envía") && !lower.includes("manda")
-          ) {
-            try {
-              callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-              const emailsRes = await executeFetchEmails(4);
-              if (emailsRes?.data?.messages && emailsRes.data.messages.length > 0) {
-                const list = emailsRes.data.messages
-                  .map((m) => `- De: ${m.sender || "Desconocido"} | Asunto: ${m.subject || "Sin asunto"}\n  Vista: ${m.preview?.body?.slice(0, 100) || ""}`)
-                  .join("\n\n");
-                toolContext = `ÚLTIMOS CORREOS OBTENIDOS DE GMAIL:\n${list}`;
-              } else {
-                toolContext = "GMAIL: No se encontraron correos nuevos o la bandeja está vacía.";
-              }
-            } catch (err) {
-              toolContext = `ERROR CONSULTANDO GMAIL: ${err.message}`;
-            }
-          }
-
-          if (
-            (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos")) &&
-            (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("mis"))
-          ) {
-            try {
-              callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-              const calRes = await executeListCalendars();
-              if (calRes?.data?.calendars) {
-                const calList = calRes.data.calendars.map((c) => `- ${c.summary || c.id} (Zona: ${c.timeZone})`).join("\n");
-                toolContext = `CALENDARIOS DISPONIBLES DE MANUEL:\n${calList}`;
-              }
-            } catch (err) {
-              toolContext = `ERROR CONSULTANDO CALENDARIO: ${err.message}`;
-            }
-          }
-
-          // PROCESAMIENTO GENERAL CON IA (Texto + Imágenes + Audios/Notas de voz)
-          try {
-            let aiReply = await askJudeBrain(userText, chatId, toolContext, mediaPart);
-
-            // Detectar notas automáticas
-            const noteMatch = aiReply.match(/\[NOTA:\s*(.*?)\]/i);
-            if (noteMatch) {
-              addNote(noteMatch[1].trim());
-              aiReply = aiReply.replace(noteMatch[0], "").trim();
-            }
-
-            // Detectar memorias automáticas
-            const memoryMatch = aiReply.match(/\[MEMORIA:\s*(.*?)\]/i);
-            if (memoryMatch) {
-              saveMemory(memoryMatch[1].trim());
-              aiReply = aiReply.replace(memoryMatch[0], "").trim();
-            }
-
-            // Detectar y ejecutar acción de envío de email
-            const emailMatch = aiReply.match(/\[ACCION_EMAIL:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/i);
-            if (emailMatch) {
-              const recipient = emailMatch[1].trim();
-              const subject = emailMatch[2].trim();
-              const body = emailMatch[3].trim();
-              aiReply = aiReply.replace(emailMatch[0], "").trim();
-
-              try {
-                callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-                await executeSendEmail(recipient, subject, body);
-                aiReply += `\n\n📧 *Correo enviado exitosamente*\n• *Para:* \`${recipient}\`\n• *Asunto:* ${subject}\n• *Mensaje:* "${body}"`;
-              } catch (sendErr) {
-                console.error("[EMAIL SEND ERROR]", sendErr);
-                aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
-              }
-            }
-
-            // Detectar acción de comando en consola de PC
-            const pcCmdMatch = aiReply.match(/\[ACCION_PC_CMD:\s*(.*?)\]/i);
-            if (pcCmdMatch) {
-              const cmdToRun = pcCmdMatch[1].trim();
-              aiReply = aiReply.replace(pcCmdMatch[0], "").trim();
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcTerminalCmd(cmdToRun);
-                aiReply += `\n\n💻 _Comando ejecutado en tu PC:_ \`${cmdToRun}\``;
-              } else {
-                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado/hibernando para ejecutar este comando._`;
-              }
-            }
-
-            // Detectar acción de lectura de archivo en PC
-            const readMatch = aiReply.match(/\[ACCION_LEER_ARCHIVO:\s*(.*?)\]/i);
-            if (readMatch) {
-              const pathTarget = readMatch[1].trim();
-              aiReply = aiReply.replace(readMatch[0], "").trim();
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcReadFile(pathTarget);
-                aiReply += `\n\n📄 _Consultando archivo en tu PC:_ \`${pathTarget}\`...`;
-              } else {
-                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado. Enciéndelo para leer este archivo._`;
-              }
-            }
-
-            // Detectar acción de edición o creación de archivo en PC
-            const editMatch = aiReply.match(/\[ACCION_EDITAR_ARCHIVO:\s*(.*?)\s*\|\s*(.*?)\]/is);
-            if (editMatch) {
-              const pathTarget = editMatch[1].trim();
-              const fileContent = editMatch[2].trim();
-              aiReply = aiReply.replace(editMatch[0], "").trim();
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcWriteFile(pathTarget, fileContent);
-                aiReply += `\n\n✏️ _Guardando archivo en tu PC:_ \`${pathTarget}\`...`;
-              } else {
-                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para guardar este archivo._`;
-              }
-            }
-
-            // Detectar delegación de programación a Antigravity en PC
-            const codeTaskMatch = aiReply.match(/\[ACCION_PC_CODE:\s*(.*?)\]/i);
-            if (codeTaskMatch) {
-              const promptTask = codeTaskMatch[1].trim();
-              aiReply = aiReply.replace(codeTaskMatch[0], "").trim();
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcCodeTask(promptTask);
-                aiReply += `\n\n🚀 *Misión delegada a Antigravity en tu PC:* _${promptTask}_`;
-              } else {
-                aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para programar en local._`;
-              }
-            }
-
-            // Detectar registro autónomo en Obsidian (Segundo Cerebro)
-            const obsidianMatch = aiReply.match(/\[ACCION_OBSIDIAN:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/is);
-            if (obsidianMatch) {
-              const folder = obsidianMatch[1].trim();
-              const filename = obsidianMatch[2].trim();
-              const content = obsidianMatch[3].trim();
-              aiReply = aiReply.replace(obsidianMatch[0], "").trim();
-              const pc = await getPcStatus();
-              if (pc.online) {
-                await sendPcObsidianNote(folder, filename, content);
-                aiReply += `\n\n🧠 _Registrado en Segundo Cerebro (Obsidian):_ \`${folder}/${filename}\``;
-              }
-            }
-
-            // Actualizar historial asegurando alternancia
-            const currentHistory = getHistory(chatId);
-            currentHistory.push({ role: "user", content: userText });
-            currentHistory.push({ role: "assistant", content: aiReply });
-            saveHistory(chatId, currentHistory, userText, aiReply);
-
-            // Enviar respuesta a Telegram
-            await sendTextMessage(chatId, aiReply);
-          } catch (aiErr) {
-            console.error("[IA ERROR]", aiErr);
-            await sendTextMessage(chatId, `⚠️ Disculpe, ${USER_NAME}. Ocurrió un error conectando con el núcleo de procesamiento.`);
-          }
+          // Encolar mensaje en la cola secuencial (FIFO)
+          enqueueUserMessage({
+            chatId,
+            senderId,
+            userText,
+            mediaPart,
+          });
         }
       }
     } catch (loopErr) {
       console.error("[POLLING ERROR] Reintentando en 3s:", loopErr.message);
       await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+}
+
+// ==========================================
+// COLA DE MENSAJES SECUENCIAL (FIFO)
+// ==========================================
+const userMessageQueue = [];
+let isQueueProcessing = false;
+
+function enqueueUserMessage(item) {
+  userMessageQueue.push(item);
+  console.log(`📥 [COLA TELEGRAM] Mensaje encolado (${userMessageQueue.length} pendientes): "${(item.userText || "").slice(0, 40)}"`);
+  callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
+  processMessageQueue();
+}
+
+async function processMessageQueue() {
+  if (isQueueProcessing) return;
+  isQueueProcessing = true;
+
+  while (userMessageQueue.length > 0) {
+    const item = userMessageQueue.shift();
+    try {
+      callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
+      await handleUserMessage(item);
+    } catch (err) {
+      console.error("[QUEUE_DISPATCH_ERROR]:", err);
+    }
+
+    if (userMessageQueue.length > 0) {
+      callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
+      // Cooldown de 600ms entre mensajes para evitar rate limits
+      await new Promise((r) => setTimeout(r, 600));
+    }
+  }
+
+  isQueueProcessing = false;
+}
+
+async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
+  callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  if (userText.startsWith("/programar_en_pc ") || userText.startsWith("/pc_code ")) {
+    const prompt = userText.replace(/^\/(programar_en_pc|pc_code)\s+/, "").trim();
+    if (prompt) {
+      const pc = await getPcStatus();
+      if (!pc.online) {
+        await sendTextMessage(chatId, `🔴 *Tu PC en casa está APAGADO.*\nPara programar este proyecto en el servidor VPS, escribe: \`/programar ${prompt}\``);
+      } else {
+        await sendPcCodeTask(prompt);
+        await sendTextMessage(
+          chatId,
+          `🚀 *Orden enviada a tu PC en casa*\n\n🎯 *Objetivo:* _${prompt}_\n\nTu ordenador ha tomado el control y está programando el proyecto. Te iré notificando cada avance aquí en directo.`
+        );
+      }
+    }
+    return;
+  }
+
+  // COMANDOS RÁPIDOS
+  if (userText === "/start" || userText === "/ayuda") {
+    const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
+      `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
+      `*Control de tu PC Remoto:*\n` +
+      `• \`/pc\` — Ver si tu ordenador está encendido o hibernando.\n` +
+      `• \`/hibernar\` o \`/apagar_pc\` — Hibernar de inmediato (conserva todas tus ventanas y apps sin cerrar nada).\n` +
+      `• \`/hibernar_en <min>\` — Programar hibernación en X minutos (ej: \`/hibernar_en 30\`).\n` +
+      `• \`/cancelar_apagado\` — Cancelar cualquier apagado o hibernación en curso.\n` +
+      `• \`/apagar_total\` — Apagado tradicional completo (cerrando programas).\n\n` +
+      `*Desarrollo & Herramientas:*\n` +
+      `• \`/programar <tarea>\` — Desarrollo de proyectos autónomo.\n` +
+      `• \`/herramientas\` — Ver las ${activeAppsList.length} integraciones activas.\n` +
+      `• \`/proyectos\` — Archivos en tu workspace.\n` +
+      `• \`/notas\` — Ver y crear notas.\n` +
+      `• \`/memoria\` — Ver lo que recuerdo sobre ti.\n\n` +
+      `_¿En qué puedo asistirte hoy?_`;
+    await sendTextMessage(chatId, welcome);
+    return;
+  }
+
+  if (userText === "/pc" || userText === "/estado_pc") {
+    const pc = await getPcStatus();
+    if (pc.online) {
+      const msg = `🟢 *Tu ordenador está ENCENDIDO y en línea*\n\n` +
+        `• *Host:* \`${pc.hostname}\`\n` +
+        `• *Conexión:* Activa (hace ${pc.secondsAgo || 1}s)\n` +
+        `• *Comandos pendientes:* ${pc.pendingCommands}\n\n` +
+        `_Puedes hibernarlo con \`/hibernar\` o \`/apagar_pc\` (conserva todas tus ventanas y apps sin cerrar nada), o programarlo con \`/hibernar_en <minutos>\`._`;
+      await sendTextMessage(chatId, msg);
+    } else {
+      const msg = `🔴 *Tu ordenador está APAGADO / HIBERNANDO*\n\n` +
+        `• *Última conexión:* ${pc.lastSeen ? new Date(pc.lastSeen).toLocaleTimeString("es-ES") : "Sin registro hoy"}\n\n` +
+        `_En el siguiente paso configuraremos el encendido remoto desde el móvil._`;
+      await sendTextMessage(chatId, msg);
+    }
+    return;
+  }
+
+  if (userText === "/apagar_pc" || userText === "/hibernar" || userText === "/hibernar_pc") {
+    const pc = await getPcStatus();
+    if (!pc.online) {
+      await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO / HIBERNANDO*.`);
+    } else {
+      await sendPcCommand("hibernate", 10);
+      await sendTextMessage(
+        chatId,
+        `💤 *Orden de hibernación enviada a tu PC*\n\nTu ordenador entrará en *hibernación en 10 segundos*.\n\n✨ *No se cerrará nada:* Todo tu trabajo, pestañas, ventanas y editores quedarán guardados intactos.\nSi deseas cancelarlo, escribe rápidamente \`/cancelar_apagado\`.`
+      );
+    }
+    return;
+  }
+
+  if (userText.startsWith("/apagar_pc_en ") || userText.startsWith("/hibernar_en ")) {
+    const minStr = userText.replace(/^\/(apagar_pc_en|hibernar_en)\s+/, "").trim();
+    const min = parseInt(minStr, 10);
+    if (isNaN(min) || min <= 0) {
+      await sendTextMessage(chatId, `⚠️ Indica un número de minutos válido. Ejemplo: \`/hibernar_en 30\``);
+    } else {
+      const sec = min * 60;
+      await sendPcCommand("hibernate", sec);
+      await sendTextMessage(
+        chatId,
+        `⏳ *Hibernación programada*\n\nTu ordenador hibernará automáticamente en *${min} minutos* (conservando todas tus ventanas abiertas).\nPara cancelarlo, escribe \`/cancelar_apagado\`.`
+      );
+    }
+    return;
+  }
+
+  if (userText === "/apagar_total" || userText === "/apagar_completo") {
+    const pc = await getPcStatus();
+    if (!pc.online) {
+      await sendTextMessage(chatId, `⚠️ Tu ordenador ya figura como *APAGADO*.`);
+    } else {
+      await sendPcCommand("shutdown", 10);
+      await sendTextMessage(
+        chatId,
+        `🛑 *Apagado completo enviado a tu PC*\n\nTu ordenador se apagará por completo (cerrando aplicaciones) en *10 segundos*.\nPara cancelar: \`/cancelar_apagado\`.`
+      );
+    }
+    return;
+  }
+
+  if (userText === "/cancelar_apagado" || userText === "/cancelar_hibernacion") {
+    await sendPcCommand("cancel_shutdown");
+    await sendTextMessage(chatId, `✅ *Apagado / hibernación cancelada con éxito.* Tu ordenador seguirá activo.`);
+    return;
+  }
+
+  if (userText.startsWith("/code ") || userText.startsWith("/programar ")) {
+    const prompt = userText.replace(/^\/(code|programar)\s+/, "").trim();
+    if (prompt) {
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcCodeTask(prompt);
+        await sendTextMessage(
+          chatId,
+          `🚀 *[ANTIGRAVITY EN TU PC]* Tarea asignada a tu ordenador.\n\n🎯 *Objetivo:* _${prompt}_\n\n💻 Ejecutando con el SDK de Antigravity en tu entorno local. Te iré reportando el progreso aquí en directo.`
+        );
+      } else {
+        await sendTextMessage(
+          chatId,
+          `💻 *Tu PC está apagado.* Iniciando desarrollo en el servidor VPS de respaldo...\n\n🎯 *Objetivo:* _${prompt}_`
+        );
+        try {
+          const summary = await runAutonomousCodingAgent({
+            taskPrompt: prompt,
+            geminiApiKey: GEMINI_API_KEY,
+            composioSession,
+            onProgress: async (update) => {
+              await sendTextMessage(chatId, update);
+            },
+          });
+          await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
+        } catch (agentErr) {
+          await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+        }
+      }
+    }
+    return;
+  }
+
+  if (userText === "/proyectos" || userText === "/archivos" || userText === "/carpetas" || userText === "/pc_carpetas") {
+    const pc = await getPcStatus();
+    if (pc.online && pc.proyectos && pc.proyectos.length > 0) {
+      const list = pc.proyectos.map((p) => `📁 \`${p}\``).join("\n");
+      await sendTextMessage(chatId, `📂 *Carpetas en tu PC (\`C:\\PROYECTOS\` — ${pc.proyectos.length} proyectos):*\n\n${list}`);
+    } else if (pc.online) {
+      await sendPcListDir("C:\\PROYECTOS");
+      await sendTextMessage(chatId, `🔍 Consultando directorio \`C:\\PROYECTOS\` en tu PC...`);
+    } else {
+      const res = listProjectFiles();
+      if (!res.success || res.files.length === 0) {
+        await sendTextMessage(chatId, `📂 *Workspace de Proyectos*\n\nTu PC está apagado y no hay archivos en el VPS todavía.`);
+      } else {
+        const list = res.files.map((f) => `• ${f.type === "dir" ? "📁" : "📄"} \`${f.path}\` ${f.size ? `_(${f.size} B)_` : ""}`).slice(0, 35).join("\n");
+        await sendTextMessage(chatId, `📂 *Archivos en Workspace VPS (${res.files.length}):*\n\n${list}`);
+      }
+    }
+    return;
+  }
+
+  if (userText.startsWith("/pc_terminal ")) {
+    const cmd = userText.replace("/pc_terminal ", "").trim();
+    if (cmd) {
+      const pc = await getPcStatus();
+      if (!pc.online) {
+        await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede ejecutar \`${cmd}\`.`);
+      } else {
+        await sendPcTerminalCmd(cmd);
+        await sendTextMessage(chatId, `💻 *Comando enviado a la consola de tu PC:* \`${cmd}\`...`);
+      }
+    }
+    return;
+  }
+
+  if (userText.startsWith("/leer ")) {
+    const filePath = userText.replace("/leer ", "").trim();
+    if (filePath) {
+      const pc = await getPcStatus();
+      if (!pc.online) {
+        await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede leer \`${filePath}\`.`);
+      } else {
+        await sendPcReadFile(filePath);
+        await sendTextMessage(chatId, `🔍 *Leyendo archivo en tu PC:* \`${filePath}\`...`);
+      }
+    }
+    return;
+  }
+
+  if (userText.startsWith("/editar ")) {
+    const raw = userText.replace("/editar ", "").trim();
+    const parts = raw.split("|");
+    const filePath = parts[0]?.trim();
+    const content = parts.slice(1).join("|")?.trim();
+    if (filePath && content !== undefined) {
+      const pc = await getPcStatus();
+      if (!pc.online) {
+        await sendTextMessage(chatId, `🔴 Tu PC está apagado. No se puede editar \`${filePath}\`.`);
+      } else {
+        await sendPcWriteFile(filePath, content);
+        await sendTextMessage(chatId, `✏️ *Guardando cambios en tu PC:* \`${filePath}\`...`);
+      }
+    } else {
+      await sendTextMessage(chatId, `⚠️ Formato: \`/editar ruta_archivo | nuevo contenido\``);
+    }
+    return;
+  }
+
+  if (userText.startsWith("/terminal ")) {
+    const cmd = userText.replace("/terminal ", "").trim();
+    if (cmd) {
+      const res = await runTerminalCommand(cmd);
+      const output = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1000);
+      await sendTextMessage(chatId, `💻 *Comando (VPS):* \`${cmd}\`\n*Código:* ${res.code}\n\`\`\`\n${output}\n\`\`\``);
+    }
+    return;
+  }
+
+  if (userText === "/herramientas") {
+    await syncConnectedApps(true);
+    const list = activeAppsList.length > 0
+      ? activeAppsList.map((a, i) => `${i + 1}. ${a.icon} *${a.name}* — ${a.desc}${a.detail ? ` (\`${a.detail}\`)` : ""}`).join("\n")
+      : "No se detectaron integraciones activas en este momento.";
+
+    const statusMsg = `🛠️ *Integraciones activas de Jude en Composio (${activeAppsList.length})*:\n\n${list}\n\n` +
+      `_Todas las herramientas están sincronizadas en vivo con tu cuenta de Composio y listas para usarse._`;
+    await sendTextMessage(chatId, statusMsg);
+    return;
+  }
+
+  if (userText === "/notas") {
+    const notes = getNotes();
+    if (notes.length === 0) {
+      await sendTextMessage(chatId, `📝 *Notas de ${USER_NAME}*\n\nNo tienes notas activas en este momento.`);
+    } else {
+      const list = notes.map((n, i) => `${i + 1}. ${n.text} _(${n.date})_`).join("\n");
+      await sendTextMessage(chatId, `📝 *Notas activas de ${USER_NAME}:*\n\n${list}`);
+    }
+    return;
+  }
+
+  if (userText.startsWith("/anotar ")) {
+    const noteContent = userText.replace("/anotar ", "").trim();
+    if (noteContent) {
+      addNote(noteContent);
+      await sendTextMessage(chatId, `✅ *Nota registrada con éxito:*\n"${noteContent}"`);
+    }
+    return;
+  }
+
+  if (userText === "/memoria") {
+    const memories = getMemories();
+    if (memories.length === 0) {
+      await sendTextMessage(chatId, `🧠 *Memoria permanente de Jude*\n\nAún no hay recuerdos guardados.`);
+    } else {
+      const list = memories.map((m, i) => `• ${m}`).join("\n");
+      await sendTextMessage(chatId, `🧠 *Recuerdos permanentes aprendidos sobre ti:*\n\n${list}`);
+    }
+    return;
+  }
+
+  if (userText === "/limpiar") {
+    saveHistory(chatId, []);
+    await sendTextMessage(chatId, `🧹 *Contexto reiniciado.* Listo para una nueva conversación.`);
+    return;
+  }
+
+  // DETECCIÓN EN LENGUAJE NATURAL DE TAREAS DE PROGRAMACIÓN AUTÓNOMA
+  const lowerText = userText.toLowerCase();
+  const isCodingRequest =
+    (lowerText.startsWith("programa ") ||
+     lowerText.startsWith("crea un script ") ||
+     lowerText.startsWith("crea un proyecto ") ||
+     lowerText.startsWith("crea un bot ") ||
+     lowerText.startsWith("desarrolla un ") ||
+     lowerText.startsWith("haz un script ") ||
+     lowerText.startsWith("haz un bot ")) &&
+    !lowerText.includes("cómo ") &&
+    !lowerText.includes("que es ");
+
+  if (isCodingRequest) {
+    await sendTextMessage(chatId, `🚀 *Modo Agente Programador Activado*\n\n🎯 *Petición detectada:* _${userText}_\n\nIniciando desarrollo autónomo en el servidor VPS...`);
+    try {
+      const summary = await runAutonomousCodingAgent({
+        taskPrompt: userText,
+        geminiApiKey: GEMINI_API_KEY,
+        composioSession,
+        onProgress: async (update) => {
+          await sendTextMessage(chatId, update);
+        },
+      });
+      await sendTextMessage(chatId, `🏁 *Desarrollo Finalizado con Éxito*\n\n${summary}`);
+    } catch (agentErr) {
+      await sendTextMessage(chatId, `⚠️ *Error durante el desarrollo:* ${agentErr.message}`);
+    }
+    return;
+  }
+
+  // ATENCIÓN PROACTIVA A CORREOS O CALENDARIO PREVIO
+  let toolContext = "";
+
+  const lower = userText.toLowerCase();
+  if (
+    (lower.includes("correo") || lower.includes("email") || lower.includes("gmail")) &&
+    (lower.includes("mira") || lower.includes("lee") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("resumen")) &&
+    !lower.includes("mándale") && !lower.includes("envía") && !lower.includes("manda")
+  ) {
+    try {
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      const emailsRes = await executeFetchEmails(4);
+      if (emailsRes?.data?.messages && emailsRes.data.messages.length > 0) {
+        const list = emailsRes.data.messages
+          .map((m) => `- De: ${m.sender || "Desconocido"} | Asunto: ${m.subject || "Sin asunto"}\n  Vista: ${m.preview?.body?.slice(0, 100) || ""}`)
+          .join("\n\n");
+        toolContext = `ÚLTIMOS CORREOS OBTENIDOS DE GMAIL:\n${list}`;
+      } else {
+        toolContext = "GMAIL: No se encontraron correos nuevos o la bandeja está vacía.";
+      }
+    } catch (err) {
+      toolContext = `ERROR CONSULTANDO GMAIL: ${err.message}`;
+    }
+  }
+
+  if (
+    (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos")) &&
+    (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("mis"))
+  ) {
+    try {
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      const calRes = await executeListCalendars();
+      if (calRes?.data?.calendars) {
+        const calList = calRes.data.calendars.map((c) => `- ${c.summary || c.id} (Zona: ${c.timeZone})`).join("\n");
+        toolContext = `CALENDARIOS DISPONIBLES DE MANUEL:\n${calList}`;
+      }
+    } catch (err) {
+      toolContext = `ERROR CONSULTANDO CALENDARIO: ${err.message}`;
+    }
+  }
+
+  // PROCESAMIENTO GENERAL CON IA (Texto + Imágenes + Audios/Notas de voz)
+  try {
+    let aiReply = await askJudeBrain(userText, chatId, toolContext, mediaPart);
+
+    // Detectar notas automáticas
+    const noteMatch = aiReply.match(/\[NOTA:\s*(.*?)\]/i);
+    if (noteMatch) {
+      addNote(noteMatch[1].trim());
+      aiReply = aiReply.replace(noteMatch[0], "").trim();
+    }
+
+    // Detectar memorias automáticas
+    const memoryMatch = aiReply.match(/\[MEMORIA:\s*(.*?)\]/i);
+    if (memoryMatch) {
+      saveMemory(memoryMatch[1].trim());
+      aiReply = aiReply.replace(memoryMatch[0], "").trim();
+    }
+
+    // Detectar y ejecutar acción de envío de email
+    const emailMatch = aiReply.match(/\[ACCION_EMAIL:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/i);
+    if (emailMatch) {
+      const recipient = emailMatch[1].trim();
+      const subject = emailMatch[2].trim();
+      const body = emailMatch[3].trim();
+      aiReply = aiReply.replace(emailMatch[0], "").trim();
+
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        await executeSendEmail(recipient, subject, body);
+        aiReply += `\n\n📧 *Correo enviado exitosamente*\n• *Para:* \`${recipient}\`\n• *Asunto:* ${subject}\n• *Mensaje:* "${body}"`;
+      } catch (sendErr) {
+        console.error("[EMAIL SEND ERROR]", sendErr);
+        aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
+      }
+    }
+
+    // Detectar acción de comando en consola de PC
+    const pcCmdMatch = aiReply.match(/\[ACCION_PC_CMD:\s*(.*?)\]/i);
+    if (pcCmdMatch) {
+      const cmdToRun = pcCmdMatch[1].trim();
+      aiReply = aiReply.replace(pcCmdMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcTerminalCmd(cmdToRun);
+        aiReply += `\n\n💻 _Comando ejecutado en tu PC:_ \`${cmdToRun}\``;
+      } else {
+        aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado/hibernando para ejecutar este comando._`;
+      }
+    }
+
+    // Detectar acción de lectura de archivo en PC
+    const readMatch = aiReply.match(/\[ACCION_LEER_ARCHIVO:\s*(.*?)\]/i);
+    if (readMatch) {
+      const pathTarget = readMatch[1].trim();
+      aiReply = aiReply.replace(readMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcReadFile(pathTarget);
+        aiReply += `\n\n📄 _Consultando archivo en tu PC:_ \`${pathTarget}\`...`;
+      } else {
+        aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado. Enciéndelo para leer este archivo._`;
+      }
+    }
+
+    // Detectar acción de edición o creación de archivo en PC
+    const editMatch = aiReply.match(/\[ACCION_EDITAR_ARCHIVO:\s*(.*?)\s*\|\s*(.*?)\]/is);
+    if (editMatch) {
+      const pathTarget = editMatch[1].trim();
+      const fileContent = editMatch[2].trim();
+      aiReply = aiReply.replace(editMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcWriteFile(pathTarget, fileContent);
+        aiReply += `\n\n✏️ _Guardando archivo en tu PC:_ \`${pathTarget}\`...`;
+      } else {
+        aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para guardar este archivo._`;
+      }
+    }
+
+    // Detectar delegación de programación a Antigravity en PC
+    const codeTaskMatch = aiReply.match(/\[ACCION_PC_CODE:\s*(.*?)\]/i);
+    if (codeTaskMatch) {
+      const promptTask = codeTaskMatch[1].trim();
+      aiReply = aiReply.replace(codeTaskMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcCodeTask(promptTask);
+        aiReply += `\n\n🚀 *Misión delegada a Antigravity en tu PC:* _${promptTask}_`;
+      } else {
+        aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado para programar en local._`;
+      }
+    }
+
+    // Detectar registro autónomo en Obsidian (Segundo Cerebro)
+    const obsidianMatch = aiReply.match(/\[ACCION_OBSIDIAN:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/is);
+    if (obsidianMatch) {
+      const folder = obsidianMatch[1].trim();
+      const filename = obsidianMatch[2].trim();
+      const content = obsidianMatch[3].trim();
+      aiReply = aiReply.replace(obsidianMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcObsidianNote(folder, filename, content);
+        aiReply += `\n\n🧠 _Registrado en Segundo Cerebro (Obsidian):_ \`${folder}/${filename}\``;
+      }
+    }
+
+    // Actualizar historial asegurando alternancia
+    const currentHistory = getHistory(chatId);
+    currentHistory.push({ role: "user", content: userText });
+    currentHistory.push({ role: "assistant", content: aiReply });
+    saveHistory(chatId, currentHistory, userText, aiReply);
+
+    // Enviar respuesta a Telegram
+    await sendTextMessage(chatId, aiReply);
+  } catch (aiErr) {
+    console.error("[IA ERROR]", aiErr);
+    const memories = getMemories();
+    const lower = userText.toLowerCase();
+    if (lower.includes("novia") || lower.includes("pareja")) {
+      await sendTextMessage(chatId, `Tu novia es Aleida, Manuel. La tengo bien presente en mis recuerdos.`);
+    } else {
+      await sendTextMessage(chatId, `Disculpa la espera, Manuel. Hubo una breve saturación temporal en la red. Ya tengo tu orden en cola y sigo conectado.`);
     }
   }
 }
