@@ -774,9 +774,16 @@ async function askJudeBrain(userMessage, chatId, toolContext = "", mediaPart = n
     ? pc.proyectos.map(p => `• ${p}`).join("\n")
     : "• Consultando sincronización con el puente local.";
 
+  const nowMadrid = new Date().toLocaleString("es-ES", {
+    timeZone: "Europe/Madrid",
+    dateStyle: "full",
+    timeStyle: "medium",
+  });
+
   const systemInstruction = `
 Eres ${ASSISTANT_NAME}, el asistente de inteligencia artificial personal de alta gama al servicio exclusivo de ${USER_NAME}.
 Tienes control total y enlace de ejecución directo con el ordenador personal de ${USER_NAME} (${pc.hostname || "WIN-CM7ASU1D27L"}).
+- FECHA Y HORA ACTUAL DE MANUEL (TIEMPO REAL EN ESPAÑA/MADRID): ${nowMadrid}
 
 CONTROL DIRECTO DE SU ORDENADOR Y AJUSTES DE WINDOWS (JUDE PC BRIDGE):
 - Estado actual de su PC en casa: ${pc.online ? `🟢 ENCENDIDO Y EN LÍNEA (${pc.hostname || "WIN-CM7ASU1D27L"})` : "🔴 APAGADO / HIBERNANDO"}
@@ -882,16 +889,18 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
   }
 
   const availableModels = [
-    "gemini-3.8-flash",
-    "gemini-flash-latest",
-    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
     "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
   ];
   let lastError = null;
-  const maxAttempts = 3;
+  const maxAttempts = 2;
+  const exhaustedModels = new Set();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     for (const modelName of availableModels) {
+      if (exhaustedModels.has(modelName)) continue;
       try {
         const model = genAI.getGenerativeModel({
           model: modelName,
@@ -902,20 +911,28 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
           },
         });
 
-        const result = await model.generateContent({ contents: formattedContents });
+        // Timeout de 7 segundos por intento para garantizar respuesta instantánea
+        const generatePromise = model.generateContent({ contents: formattedContents });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout en ${modelName}`)), 7000)
+        );
+
+        const result = await Promise.race([generatePromise, timeoutPromise]);
         const reply = result.response.text();
         if (reply) return reply;
       } catch (err) {
         lastError = err;
         console.warn(`[GEMINI_WARN] (Intento ${attempt}/${maxAttempts}) Fallo con ${modelName}:`, err.message);
-        if (err.status === 404) continue; // Si no existe el modelo, pasar al siguiente
+        // Si el modelo da 404 o 429 (cuota diaria), excluirlo de reintentos
+        if (err.status === 404 || err.status === 429) {
+          exhaustedModels.add(modelName);
+          continue;
+        }
       }
     }
 
     if (attempt < maxAttempts) {
-      const waitMs = attempt * 1200;
-      console.log(`[GEMINI_RETRY] Servidor ocupado. Reintentando en ${waitMs}ms...`);
-      await new Promise((r) => setTimeout(r, waitMs));
+      await new Promise((r) => setTimeout(r, 400));
     }
   }
 
