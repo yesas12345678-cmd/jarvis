@@ -194,6 +194,285 @@ async function executeListCalendars() {
   return await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
 }
 
+// ==========================================
+// GESTIÓN DE EXÁMENES Y ESTUDIO EN GOOGLE CALENDAR
+// ==========================================
+function parseSpanishExamDate(str) {
+  if (!str) {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+  const clean = str.trim().toLowerCase();
+  const now = new Date();
+
+  if (clean.includes("en una semana") || clean.includes("1 semana") || clean.includes("una semana")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 7);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+  if (clean.includes("en dos semanas") || clean.includes("2 semanas") || clean.includes("dos semanas")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 14);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+  if (clean.includes("mañana") && !clean.includes("pasado")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+  if (clean.includes("pasado mañana")) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 2);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+
+  const daysOfWeek = {
+    domingo: 0, lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
+    jueves: 4, viernes: 5, sabado: 6, sábado: 6
+  };
+  for (const [dayName, dayIndex] of Object.entries(daysOfWeek)) {
+    if (clean.includes(dayName)) {
+      const currentDay = now.getDay();
+      let diff = dayIndex - currentDay;
+      if (diff <= 0) diff += 7;
+      const d = new Date(now);
+      d.setDate(d.getDate() + diff);
+      d.setHours(23, 59, 59, 999);
+      return d;
+    }
+  }
+
+  const months = {
+    enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
+    julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9, noviembre: 10, diciembre: 11
+  };
+  const regexDate = /(\d{1,2})\s+de\s+([a-záéíóú]+)(?:\s+de\s+(\d{4}))?/i;
+  const match = clean.match(regexDate);
+  if (match) {
+    const day = parseInt(match[1], 10);
+    const monthStr = match[2].toLowerCase();
+    const year = match[3] ? parseInt(match[3], 10) : now.getFullYear();
+    if (months[monthStr] !== undefined) {
+      return new Date(year, months[monthStr], day, 23, 59, 59, 999);
+    }
+  }
+
+  const isoMatch = clean.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    return new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10), 23, 59, 59, 999);
+  }
+
+  const slashMatch = clean.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/);
+  if (slashMatch) {
+    const day = parseInt(slashMatch[1], 10);
+    const month = parseInt(slashMatch[2], 10) - 1;
+    const year = slashMatch[3] ? parseInt(slashMatch[3], 10) : now.getFullYear();
+    return new Date(year, month, day, 23, 59, 59, 999);
+  }
+
+  const fallback = new Date(now);
+  fallback.setDate(fallback.getDate() + 7);
+  fallback.setHours(23, 59, 59, 999);
+  return fallback;
+}
+
+function parseStudyHours(str) {
+  if (!str) return 2;
+  const s = String(str).toLowerCase().trim();
+  if (s.includes("media hora")) return 0.5;
+  if (s.includes("hora y media") || s.includes("1 hora y media")) return 1.5;
+  if (s.includes("dos horas y media") || s.includes("2 horas y media")) return 2.5;
+  if (s.includes("tres horas y media") || s.includes("3 horas y media")) return 3.5;
+  if (s.includes("cuatro horas y media") || s.includes("4 horas y media")) return 4.5;
+  const num = parseFloat(s.replace(/[^0-9.,]/g, "").replace(",", "."));
+  return isNaN(num) || num <= 0 ? 2 : num;
+}
+
+function cleanSubjectName(str) {
+  if (!str) return "Examen";
+  let s = str.trim();
+  s = s.replace(/^(examen\s+de|ex\.\s*de|ex\.|estudio\s+de|prueba\s+de)\s+/i, "");
+  s = s.replace(/^(el\s+examen\s+de|el\s+de)\s+/i, "");
+  return s.trim() || "Examen";
+}
+
+async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas, chatId }) {
+  if (!composioSession) {
+    throw new Error("Sesión de Composio no inicializada.");
+  }
+
+  const cleanMateria = cleanSubjectName(materia);
+  const targetHours = parseStudyHours(horasRequeridas);
+  const examDate = parseSpanishExamDate(fechaExamenStr);
+  const now = new Date();
+
+  console.log(`📅 [ESTUDIO EXAMEN] Agendando ${targetHours}h para "${cleanMateria}" antes de ${examDate.toISOString()}`);
+
+  const res = await composioSession.execute("GOOGLECALENDAR_FIND_EVENT", {
+    calendar_id: "primary",
+    time_min: now.toISOString(),
+    time_max: examDate.toISOString(),
+    single_events: true,
+    max_results: 250,
+  });
+
+  const allItems = res?.data?.event_data?.event_data || res?.data?.items || [];
+  const availableSlots = [];
+
+  for (const item of allItems) {
+    const summary = (item.summary || "").trim().toLowerCase();
+    if (summary.startsWith("estudio") || summary.startsWith("examen") || summary.startsWith("ex.")) {
+      continue;
+    }
+
+    const isGreen = item.colorId === "10";
+    const isUntitled = !summary || summary === "no title" || summary === "(sin título)" || summary === "sin título";
+
+    if (isGreen && isUntitled) {
+      const start = new Date(item.start?.dateTime || item.start?.date);
+      const end = new Date(item.end?.dateTime || item.end?.date);
+
+      if (start.getTime() > now.getTime() && end.getTime() <= examDate.getTime()) {
+        const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        if (durationHours > 0) {
+          availableSlots.push({
+            id: item.id,
+            start,
+            end,
+            durationHours,
+            recurringEventId: item.recurringEventId,
+          });
+        }
+      }
+    }
+  }
+
+  availableSlots.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  if (availableSlots.length === 0) {
+    return {
+      success: false,
+      message: `No he encontrado huecos verdes libres ("No title") en tu calendario Time Blocking entre hoy y el ${examDate.toLocaleDateString("es-ES")}.`,
+      assignedSlots: [],
+      hoursAllocated: 0,
+      targetHours,
+      materia: cleanMateria,
+      examDate,
+    };
+  }
+
+  let hoursAllocated = 0;
+  const assignedSlots = [];
+  const studyTitle = `Estudio: Ex. ${cleanMateria}`;
+
+  for (const slot of availableSlots) {
+    if (hoursAllocated >= targetHours) break;
+
+    try {
+      await composioSession.execute("GOOGLECALENDAR_PATCH_EVENT", {
+        calendar_id: "primary",
+        event_id: slot.id,
+        summary: studyTitle,
+        color_id: "9",
+      });
+
+      hoursAllocated += slot.durationHours;
+      assignedSlots.push({
+        id: slot.id,
+        start: slot.start,
+        end: slot.end,
+        durationHours: slot.durationHours,
+      });
+    } catch (patchErr) {
+      console.warn(`[CALENDAR_PATCH_WARN] Error asignando hueco ${slot.id}:`, patchErr.message);
+    }
+  }
+
+  // Registrar el examen en el calendario "Exámenes"
+  let examCreated = false;
+  try {
+    const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
+    const dateStr = examDate.toISOString().split("T")[0];
+    await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
+      calendar_id: examCalId,
+      summary: `Examen: ${cleanMateria}`,
+      start_datetime: `${dateStr}T09:00:00`,
+      timezone: "Europe/Madrid",
+      event_duration_hour: 2,
+      event_duration_minutes: 0,
+      create_meeting_room: false,
+    });
+    examCreated = true;
+  } catch (examErr) {
+    console.warn(`[EXAM_CREATE_WARN]`, examErr.message);
+  }
+
+  // Actualizar Segundo Cerebro (Obsidian) de forma autónoma
+  try {
+    const pc = await getPcStatus();
+    if (pc.online) {
+      const noteContent = `# Plan de Estudio: [[Examen ${cleanMateria}]]\n\n` +
+        `- **Materia:** [[${cleanMateria}]]\n` +
+        `- **Fecha del Examen:** ${examDate.toLocaleDateString("es-ES")}\n` +
+        `- **Horas Asignadas:** ${hoursAllocated}h / ${targetHours}h solicitadas\n` +
+        `- **Calendario:** [[Time Blocking]] (Google Calendar)\n` +
+        `- **Modo:** Ocurrencia única semanal (las siguientes semanas permanecen libres)\n\n` +
+        `## Sesiones Agendadas\n` +
+        assignedSlots.map(s => `- [[${s.start.toLocaleDateString("es-ES")}]] de ${s.start.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} a ${s.end.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} (${s.durationHours}h)`).join("\n") +
+        `\n\n---\n*Generado automáticamente por [[Jude]] y [[Antigravity]]*`;
+
+      await sendPcObsidianNote("Estudios", `Plan_${cleanMateria.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/g, "_")}.md`, noteContent);
+    }
+  } catch (obsidianErr) {
+    console.warn("[OBSIDIAN_SYNC_WARN]:", obsidianErr.message);
+  }
+
+  return {
+    success: true,
+    materia: cleanMateria,
+    examDate,
+    hoursAllocated,
+    targetHours,
+    assignedSlots,
+    examCreated,
+  };
+}
+
+function formatStudyScheduleReport(result) {
+  if (!result.success) {
+    return `⚠️ *No se pudieron agendar las horas de estudio*\n\n${result.message}`;
+  }
+
+  const { materia, examDate, hoursAllocated, targetHours, assignedSlots } = result;
+  const examDateStr = examDate.toLocaleDateString("es-ES", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+
+  const slotsList = assignedSlots.map(s => {
+    const dia = s.start.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+    const hInicio = s.start.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    const hFin = s.end.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+    return `• *${dia}:* \`${hInicio} - ${hFin}\` (${s.durationHours}h) → \`Estudio: Ex. ${materia}\``;
+  }).join("\n");
+
+  return `📅 *Plan de Estudio Agendado en Google Calendar*\n\n` +
+    `• *Materia:* *${materia}*\n` +
+    `• *Fecha del examen:* *${examDateStr}*\n` +
+    `• *Horas agendadas:* *${hoursAllocated}h* (de ${targetHours}h solicitadas)\n` +
+    `• *Color asignado:* 🫐 Blueberry / Estudio (\`#9\`)\n` +
+    `• *Aislamiento semanal:* ✅ _Modificación de ocurrencia única (las semanas futuras continúan verdes e intactas)_\n\n` +
+    `📋 *Bloques de estudio asignados:*\n${slotsList}\n\n` +
+    `_Notas y seguimiento vinculados automáticamente en tu [[Segundo Cerebro]]. ¡A por todas, Manuel!_`;
+}
+
 // Helpers de control remoto del PC
 async function getPcStatus() {
   try {
@@ -444,6 +723,16 @@ REGLAS DE OPERACIÓN:
    - NUNCA inventes porcentajes de progreso falsos (como "60%", "90%", "100%"). Si no hay un proceso técnico cuantificado corriendo, di la verdad.
    - NUNCA inventes enlaces web, URLs de despliegue o confirmaciones ficticias de sitios publicados si no has recibido una respuesta real verificada de la API.
    - Si se te pide desarrollar una web o proyecto, NO finjas que lo estás haciendo mentalmente: asigna la tarea técnica real a Antigravity con [ACCION_PC_CODE: ...] o di claramente que necesitas confirmación para lanzar el proceso real.
+
+9. GESTIÓN Y AGENDADO DE ESTUDIO PARA EXÁMENES EN GOOGLE CALENDAR:
+   - Tienes acceso activo y directo a Google Calendar de Manuel (${primaryGmailAddress || "yesas12345678@gmail.com"}).
+   - Manuel tiene bloques libres verdes sin título ("No title") en su calendario Time Blocking.
+   - Cuando Manuel te mencione que tiene un examen (ej: "tengo examen de [Materia] el [Fecha] y quiero estudiar [X] horas", "tengo examen este día y quiero estudiar tantas horas", o en audio/nota de voz):
+     1. Extrae: la Materia, la Fecha del examen y las Horas de estudio deseadas.
+     2. Añade SIEMPRE al final de tu respuesta la etiqueta de acción:
+        [ACCION_AGENDAR_ESTUDIO: Materia | Fecha_del_examen | Horas]
+        (Ejemplos: [ACCION_AGENDAR_ESTUDIO: Lengua | en una semana | 4], [ACCION_AGENDAR_ESTUDIO: Matemáticas | 20 de octubre | 3.5]).
+     3. Explícale a Manuel que buscarás sus huecos libres verdes ("No title") hasta la fecha del examen, los renombrarás a "Estudio: Ex. [Materia]" en color azul de estudio, y confirmale que se modificará ÚNICAMENTE esa semana (para solo una vez), dejando las semanas futuras intactas.
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
@@ -773,6 +1062,24 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
   }
 
   // COMANDOS RÁPIDOS
+  if (userText.startsWith("/estudio ") || userText.startsWith("/agendar_estudio ")) {
+    const raw = userText.replace(/^\/(estudio|agendar_estudio)\s+/, "").trim();
+    const parts = raw.split("|");
+    const materia = parts[0]?.trim();
+    const fecha = parts[1]?.trim() || "en una semana";
+    const horas = parts[2]?.trim() || "2";
+    if (materia) {
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      try {
+        const report = await scheduleExamStudySlots({ materia, fechaExamenStr: fecha, horasRequeridas: horas, chatId });
+        await sendTextMessage(chatId, formatStudyScheduleReport(report));
+      } catch (err) {
+        await sendTextMessage(chatId, `⚠️ Error agendando estudio: ${err.message}`);
+      }
+      return;
+    }
+  }
+
   if (userText === "/start" || userText === "/ayuda") {
     const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
       `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
@@ -782,6 +1089,8 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
       `• \`/hibernar_en <min>\` — Programar hibernación en X minutos (ej: \`/hibernar_en 30\`).\n` +
       `• \`/cancelar_apagado\` — Cancelar cualquier apagado o hibernación en curso.\n` +
       `• \`/apagar_total\` — Apagado tradicional completo (cerrando programas).\n\n` +
+      `*Estudio & Google Calendar:*\n` +
+      `• \`/estudio <materia> | <fecha> | <horas>\` — Agendar bloques de estudio en huecos libres de Google Calendar.\n\n` +
       `*Desarrollo & Herramientas:*\n` +
       `• \`/programar <tarea>\` — Desarrollo de proyectos autónomo.\n` +
       `• \`/herramientas\` — Ver las ${activeAppsList.length} integraciones activas.\n` +
@@ -1196,6 +1505,29 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
       if (pc.online) {
         await sendPcObsidianNote(folder, filename, content);
         aiReply += `\n\n🧠 _Registrado en Segundo Cerebro (Obsidian):_ \`${folder}/${filename}\``;
+      }
+    }
+
+    // Detectar acción de agendar horas de estudio para examen en Google Calendar
+    const studyMatch = aiReply.match(/\[ACCION_AGENDAR_ESTUDIO:\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\]/i);
+    if (studyMatch) {
+      const matRaw = studyMatch[1].trim();
+      const fechaRaw = studyMatch[2].trim();
+      const horasRaw = studyMatch[3].trim();
+      aiReply = aiReply.replace(studyMatch[0], "").trim();
+
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        const studyResult = await scheduleExamStudySlots({
+          materia: matRaw,
+          fechaExamenStr: fechaRaw,
+          horasRequeridas: horasRaw,
+          chatId,
+        });
+        aiReply += `\n\n` + formatStudyScheduleReport(studyResult);
+      } catch (studyErr) {
+        console.error("[CALENDAR_STUDY_ERROR]", studyErr);
+        aiReply += `\n\n⚠️ _Error al agendar en Google Calendar:_ ${studyErr.message}`;
       }
     }
 
