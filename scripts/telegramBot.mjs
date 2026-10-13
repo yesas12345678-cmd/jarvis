@@ -826,8 +826,15 @@ REGLAS DE OPERACIÓN:
    - Para programar, escribir código, refactorizar, editar archivos de desarrollo o compilar proyectos, SIEMPRE necesitas y delegas en ANTIGRAVITY (el motor y agente de programación local).
    - Cuando Manuel te hable de programar o crear funciones, orquesta la estrategia y déjale claro que la implementación técnica en código se la asignas a Antigravity usando [ACCION_PC_CODE: tarea].
 
-7. CONTROL TOTAL DE ARCHIVOS, AJUSTES Y TERMINAL EN EL PC:
-   - Modificar ajustes de Windows, abrir apps o cambiar configuración: añade [ACCION_PC_CMD: comando] (ej: [ACCION_PC_CMD: start ms-settings:display] o [ACCION_PC_CMD: powershell Set-ItemProperty ...]).
+7. CONTROL TOTAL DE ARCHIVOS, AJUSTES Y APPS EN EL PC:
+   - ABRIR APLICACIONES DIRECTAMENTE EN SU PANTALLA ("abre gemini", "abre la aplicación de gemini", "pero que la vea yo", "abre obsidian", "abre notion", "abre chrome"):
+     * Para abrir Google Gemini (su app nativa de escritorio): añade SIEMPRE [ACCION_PC_CMD: Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Gemini.lnk"] o [ACCION_ABRIR_APP: Gemini]
+     * ¡NUNCA ejecutes simplemente "start https://gemini.google.com" si te pide la aplicación de Gemini! Abre su aplicación nativa de escritorio para que se despliegue visiblemente en su monitor.
+     * Para abrir páginas web o URLs en el navegador: añade [ACCION_PC_CMD: Start-Process chrome.exe "https://..."]
+     * Para abrir Obsidian: añade [ACCION_PC_CMD: Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Obsidian.lnk"] o [ACCION_ABRIR_APP: Obsidian]
+     * Para abrir Notion: añade [ACCION_PC_CMD: Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Notion.lnk"] o [ACCION_ABRIR_APP: Notion]
+     * O usa la etiqueta directa: [ACCION_ABRIR_APP: nombre_app] (ej: [ACCION_ABRIR_APP: Gemini]).
+   - Modificar ajustes de Windows, volumen, pantalla o sistema: añade [ACCION_PC_CMD: comando] (ej: [ACCION_PC_CMD: start ms-settings:display] o [ACCION_PC_CMD: powershell Set-ItemProperty ...]).
    - Ver o leer un archivo de su PC: añade [ACCION_LEER_ARCHIVO: ruta_completa].
    - Crear o editar un archivo en su PC: añade [ACCION_EDITAR_ARCHIVO: ruta_completa | contenido].
    - Ejecutar cualquier comando en su consola: añade [ACCION_PC_CMD: comando].
@@ -1563,6 +1570,20 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
       } catch (sendErr) {
         console.error("[EMAIL SEND ERROR]", sendErr);
         aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
+      }
+    }
+
+    // Detectar acción de abrir app en la pantalla del PC
+    const openAppMatch = aiReply.match(/\[ACCION_ABRIR_APP:\s*(.*?)\]/i);
+    if (openAppMatch) {
+      const appTarget = openAppMatch[1].trim();
+      aiReply = aiReply.replace(openAppMatch[0], "").trim();
+      const pc = await getPcStatus();
+      if (pc.online) {
+        await sendPcCommand("open_app", 0, null, { app: appTarget });
+        aiReply += `\n\n🖥️ _Abriendo aplicación en tu pantalla:_ \`${appTarget}\``;
+      } else {
+        aiReply += `\n\n⚠️ _Tu ordenador en casa está apagado/hibernando para abrir esta aplicación._`;
       }
     }
 

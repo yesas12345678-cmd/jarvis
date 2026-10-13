@@ -122,6 +122,7 @@ export async function POST(req: Request) {
         folder: body.folder || null,
         filename: body.filename || null,
         mode: body.mode || null,
+        app: body.app || null,
         createdAt: new Date().toISOString(),
       };
       state.commands.push(newCmd);

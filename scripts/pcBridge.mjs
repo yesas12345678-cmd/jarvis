@@ -196,10 +196,43 @@ async function handleCommand(cmd) {
 
   // 6. Ejecutar comando en la consola del PC
   if (cmd.action === "run_pc_cmd" && cmd.command) {
-    console.log(`💻 [COMANDO DE CONSOLA EN PC]: ${cmd.command}`);
-    const res = await executeSystemCommand(cmd.command);
-    const out = (res.stdout || res.stderr || "(sin salida)").trim().slice(0, 1500);
-    await sendTaskCompletion(cmd.id, `💻 *Comando en tu PC:* \`${cmd.command}\`\n\`\`\`\n${out}\n\`\`\``);
+    let commandToRun = cmd.command.trim();
+    const lower = commandToRun.toLowerCase();
+
+    // Detección inteligente para abrir la aplicación nativa de Gemini en pantalla
+    if (lower.includes("gemini.google.com") || lower.includes("start gemini") || lower === "gemini") {
+      commandToRun = `Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Gemini.lnk"`;
+      console.log(`✨ [AUTO-CORRECCIÓN APP GEMINI]: Redirigido a app nativa de escritorio en pantalla.`);
+    }
+
+    console.log(`💻 [COMANDO DE CONSOLA EN PC]: ${commandToRun}`);
+    const res = await executeSystemCommand(commandToRun);
+    const out = (res.stdout || res.stderr || "(ejecutado en pantalla)").trim().slice(0, 1500);
+    await sendTaskCompletion(cmd.id, `💻 *Comando en tu PC:* \`${commandToRun}\`\n\`\`\`\n${out}\n\`\`\``);
+    return;
+  }
+
+  // 6.1. Abrir aplicaciones directamente en la pantalla de Manuel
+  if (cmd.action === "open_app") {
+    const rawTarget = (cmd.app || cmd.command || "").trim();
+    const target = rawTarget.toLowerCase();
+    let launchCmd = "";
+
+    if (target.includes("gemini")) {
+      launchCmd = `Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Gemini.lnk"`;
+    } else if (target.includes("obsidian")) {
+      launchCmd = `Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Obsidian.lnk"`;
+    } else if (target.includes("notion")) {
+      launchCmd = `Start-Process explorer.exe "C:\\Users\\yesas\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Notion.lnk"`;
+    } else if (target.includes("chrome") || target.startsWith("http")) {
+      launchCmd = `Start-Process chrome.exe "${rawTarget}"`;
+    } else {
+      launchCmd = `Start-Process explorer.exe "${rawTarget}"`;
+    }
+
+    console.log(`🖥️ [ABRIENDO APLICACIÓN EN PANTALLA]: ${launchCmd}`);
+    const res = await executeSystemCommand(launchCmd);
+    await sendTaskCompletion(cmd.id, `🖥️ *Aplicación abierta en tu monitor:* \`${rawTarget}\``);
     return;
   }
 
