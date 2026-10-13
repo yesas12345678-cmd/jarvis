@@ -436,7 +436,10 @@ REGLAS DE OPERACIÓN:
    - Si te pide ver o leer un archivo de su PC: añade [ACCION_LEER_ARCHIVO: ruta_completa].
    - Si te pide crear o editar un archivo en su PC: añade [ACCION_EDITAR_ARCHIVO: ruta_completa | contenido].
    - Si te pide ejecutar un comando en la consola de su PC: añade [ACCION_PC_CMD: comando].
-   - Si te pide registrar una nota o arquitectura en su Segundo Cerebro (Obsidian): añade [ACCION_OBSIDIAN: carpeta | titulo | contenido].
+8. PROHIBIDO ALUCINAR O SIMULAR EJECUCIÓN (REGLA DE VERACIDAD ABSOLUTA):
+   - NUNCA inventes porcentajes de progreso falsos (como "60%", "90%", "100%"). Si no hay un proceso técnico cuantificado corriendo, di la verdad.
+   - NUNCA inventes enlaces web, URLs de despliegue o confirmaciones ficticias de sitios publicados si no has recibido una respuesta real verificada de la API.
+   - Si se te pide desarrollar una web o proyecto, NO finjas que lo estás haciendo mentalmente: asigna la tarea técnica real a Antigravity con [ACCION_PC_CODE: ...] o di claramente que necesitas confirmación para lanzar el proceso real.
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
