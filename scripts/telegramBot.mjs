@@ -302,6 +302,14 @@ function cleanSubjectName(str) {
   return s.trim() || "Examen";
 }
 
+function getDayKey(date) {
+  const d = new Date(date);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas, chatId }) {
   if (!composioSession) {
     throw new Error("Sesión de Composio no inicializada.");
@@ -312,21 +320,25 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
   const examDate = parseSpanishExamDate(fechaExamenStr);
   const now = new Date();
 
-  console.log(`📅 [ESTUDIO EXAMEN] Agendando ${targetHours}h para "${cleanMateria}" antes de ${examDate.toISOString()}`);
+  // El examen es en examDate; el estudio se agenda en los días previos
+  const examDayStart = new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate(), 0, 0, 0);
+
+  console.log(`📅 [ESTUDIO EXAMEN] Agendando ${targetHours} días/horas para "${cleanMateria}" antes del examen ${examDayStart.toISOString()}`);
 
   const res = await composioSession.execute("GOOGLECALENDAR_FIND_EVENT", {
     calendar_id: "primary",
     time_min: now.toISOString(),
-    time_max: examDate.toISOString(),
+    time_max: new Date(examDayStart.getTime() + 24 * 3600 * 1000).toISOString(),
     single_events: true,
     max_results: 250,
   });
 
   const allItems = res?.data?.event_data?.event_data || res?.data?.items || [];
-  const availableSlots = [];
+  const slotsByDay = {};
 
   for (const item of allItems) {
     const summary = (item.summary || "").trim().toLowerCase();
+    // Excluir si ya tiene asignado un estudio o examen
     if (summary.startsWith("estudio") || summary.startsWith("examen") || summary.startsWith("ex.")) {
       continue;
     }
@@ -338,10 +350,13 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
       const start = new Date(item.start?.dateTime || item.start?.date);
       const end = new Date(item.end?.dateTime || item.end?.date);
 
-      if (start.getTime() > now.getTime() && end.getTime() <= examDate.getTime()) {
+      // Comprobar que esté en el futuro y estrictamente antes de que empiece el día del examen
+      if (start.getTime() > now.getTime() && start.getTime() < examDayStart.getTime()) {
         const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
         if (durationHours > 0) {
-          availableSlots.push({
+          const dayKey = getDayKey(start);
+          if (!slotsByDay[dayKey]) slotsByDay[dayKey] = [];
+          slotsByDay[dayKey].push({
             id: item.id,
             start,
             end,
@@ -353,12 +368,20 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
   }
 
-  availableSlots.sort((a, b) => a.start.getTime() - b.start.getTime());
+  // REGLA 1: En cada día disponible, elegir el cuadrante libre MÁS TEMPRANO
+  // REGLA 2: Máximo 1 hora / 1 sesión al día (un único bloque por día)
+  const bestSlotPerDay = {};
+  for (const [dayKey, daySlots] of Object.entries(slotsByDay)) {
+    daySlots.sort((a, b) => a.start.getTime() - b.start.getTime());
+    bestSlotPerDay[dayKey] = daySlots[0];
+  }
 
-  if (availableSlots.length === 0) {
+  const availableDays = Object.keys(bestSlotPerDay);
+
+  if (availableDays.length === 0) {
     return {
       success: false,
-      message: `No he encontrado huecos verdes libres ("No title") en tu calendario Time Blocking entre hoy y el ${examDate.toLocaleDateString("es-ES")}.`,
+      message: `No he encontrado huecos verdes libres ("No title") en tu calendario Time Blocking antes del examen del ${examDate.toLocaleDateString("es-ES")}.`,
       assignedSlots: [],
       hoursAllocated: 0,
       targetHours,
@@ -367,19 +390,86 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     };
   }
 
+  // REGLA 3: Prioridad de días para esquivar fines de semana
+  // Tier 1: Lunes a Jueves (lunes=1, martes=2, miércoles=3, jueves=4) -> Óptimo entre semana
+  // Tier 2: Domingo (0) -> Primera opción de respaldo si faltan huecos entre semana
+  // Tier 3: Sábado (6) -> Segunda opción de respaldo
+  // Tier 4: Viernes (5) -> Última opción de respaldo
+  const tier1MonThu = [];
+  const tier2Sunday = [];
+  const tier3Saturday = [];
+  const tier4Friday = [];
+
+  for (const dayKey of availableDays) {
+    const [y, m, d] = dayKey.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
+    const dow = dateObj.getDay();
+
+    if (dow >= 1 && dow <= 4) {
+      tier1MonThu.push({ dayKey, date: dateObj, slot: bestSlotPerDay[dayKey] });
+    } else if (dow === 0) {
+      tier2Sunday.push({ dayKey, date: dateObj, slot: bestSlotPerDay[dayKey] });
+    } else if (dow === 6) {
+      tier3Saturday.push({ dayKey, date: dateObj, slot: bestSlotPerDay[dayKey] });
+    } else if (dow === 5) {
+      tier4Friday.push({ dayKey, date: dateObj, slot: bestSlotPerDay[dayKey] });
+    }
+  }
+
+  // Ordenar dentro de cada tier hacia atrás (los más cercanos al examen primero para frescura de estudio)
+  const sortByProximity = (arr) => arr.sort((a, b) => b.date.getTime() - a.date.getTime());
+  sortByProximity(tier1MonThu);
+  sortByProximity(tier2Sunday);
+  sortByProximity(tier3Saturday);
+  sortByProximity(tier4Friday);
+
+  const selectedCandidates = [];
+
+  // 1º Días entre semana (Lunes a Jueves)
+  for (const item of tier1MonThu) {
+    if (selectedCandidates.length >= targetHours) break;
+    selectedCandidates.push(item);
+  }
+
+  // 2º Domingo si faltan huecos
+  if (selectedCandidates.length < targetHours) {
+    for (const item of tier2Sunday) {
+      if (selectedCandidates.length >= targetHours) break;
+      selectedCandidates.push(item);
+    }
+  }
+
+  // 3º Sábado si aún faltan
+  if (selectedCandidates.length < targetHours) {
+    for (const item of tier3Saturday) {
+      if (selectedCandidates.length >= targetHours) break;
+      selectedCandidates.push(item);
+    }
+  }
+
+  // 4º Viernes como última opción si aún faltan
+  if (selectedCandidates.length < targetHours) {
+    for (const item of tier4Friday) {
+      if (selectedCandidates.length >= targetHours) break;
+      selectedCandidates.push(item);
+    }
+  }
+
+  // Ordenar cronológicamente (de pasado a futuro) para asignar en orden
+  selectedCandidates.sort((a, b) => a.date.getTime() - b.date.getTime());
+
   let hoursAllocated = 0;
   const assignedSlots = [];
   const studyTitle = `Estudio: Ex. ${cleanMateria}`;
 
-  for (const slot of availableSlots) {
-    if (hoursAllocated >= targetHours) break;
-
+  for (const item of selectedCandidates) {
+    const slot = item.slot;
     try {
       await composioSession.execute("GOOGLECALENDAR_PATCH_EVENT", {
         calendar_id: "primary",
         event_id: slot.id,
         summary: studyTitle,
-        color_id: "9",
+        color_id: "9", // Blueberry / Estudio
       });
 
       hoursAllocated += slot.durationHours;
@@ -394,20 +484,34 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
   }
 
-  // Registrar el examen en el calendario "Exámenes"
+  // REGLA 4: Registrar el examen como EVENTO DE TODO EL DÍA en Google Calendar
   let examCreated = false;
   try {
     const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
-    const dateStr = examDate.toISOString().split("T")[0];
+    const startDateStr = getDayKey(examDate);
+    const nextDay = new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate() + 1);
+    const endDateStr = getDayKey(nextDay);
+
+    // En calendario oficial de Exámenes
     await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
       calendar_id: examCalId,
       summary: `Examen: ${cleanMateria}`,
-      start_datetime: `${dateStr}T09:00:00`,
-      timezone: "Europe/Madrid",
-      event_duration_hour: 2,
-      event_duration_minutes: 0,
+      start_date: startDateStr,
+      end_date: endDateStr,
       create_meeting_room: false,
     });
+
+    // En calendario primario para que se vea en el banner superior
+    try {
+      await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
+        calendar_id: "primary",
+        summary: `Examen: ${cleanMateria}`,
+        start_date: startDateStr,
+        end_date: endDateStr,
+        create_meeting_room: false,
+      });
+    } catch {}
+
     examCreated = true;
   } catch (examErr) {
     console.warn(`[EXAM_CREATE_WARN]`, examErr.message);
@@ -419,10 +523,12 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     if (pc.online) {
       const noteContent = `# Plan de Estudio: [[Examen ${cleanMateria}]]\n\n` +
         `- **Materia:** [[${cleanMateria}]]\n` +
-        `- **Fecha del Examen:** ${examDate.toLocaleDateString("es-ES")}\n` +
-        `- **Horas Asignadas:** ${hoursAllocated}h / ${targetHours}h solicitadas\n` +
-        `- **Calendario:** [[Time Blocking]] (Google Calendar)\n` +
-        `- **Modo:** Ocurrencia única semanal (las siguientes semanas permanecen libres)\n\n` +
+        `- **Fecha del Examen:** ${examDate.toLocaleDateString("es-ES")} (Todo el día)\n` +
+        `- **Sesiones Asignadas:** ${assignedSlots.length} días (máx 1h diaria)\n` +
+        `- **Horas Totales:** ${hoursAllocated.toFixed(1)}h / ${targetHours}h solicitadas\n` +
+        `- **Estrategia:** Entre semana (L-J prioritario, esquivando fin de semana)\n` +
+        `- **Horario diario:** Cuadrante libre más temprano de cada día\n` +
+        `- **Modo:** Ocurrencia única semanal ("para solo una vez", semanas siguientes intactas)\n\n` +
         `## Sesiones Agendadas\n` +
         assignedSlots.map(s => `- [[${s.start.toLocaleDateString("es-ES")}]] de ${s.start.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} a ${s.end.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} (${s.durationHours}h)`).join("\n") +
         `\n\n---\n*Generado automáticamente por [[Jude]] y [[Antigravity]]*`;
@@ -457,20 +563,21 @@ function formatStudyScheduleReport(result) {
   });
 
   const slotsList = assignedSlots.map(s => {
-    const dia = s.start.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+    const dia = s.start.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "short" });
     const hInicio = s.start.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
     const hFin = s.end.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-    return `• *${dia}:* \`${hInicio} - ${hFin}\` (${s.durationHours}h) → \`Estudio: Ex. ${materia}\``;
+    return `• *${dia.charAt(0).toUpperCase() + dia.slice(1)}:* \`${hInicio} - ${hFin}\` (${s.durationHours}h) → \`Estudio: Ex. ${materia}\``;
   }).join("\n");
 
   return `📅 *Plan de Estudio Agendado en Google Calendar*\n\n` +
     `• *Materia:* *${materia}*\n` +
-    `• *Fecha del examen:* *${examDateStr}*\n` +
-    `• *Horas agendadas:* *${hoursAllocated}h* (de ${targetHours}h solicitadas)\n` +
-    `• *Color asignado:* 🫐 Blueberry / Estudio (\`#9\`)\n` +
-    `• *Aislamiento semanal:* ✅ _Modificación de ocurrencia única (las semanas futuras continúan verdes e intactas)_\n\n` +
-    `📋 *Bloques de estudio asignados:*\n${slotsList}\n\n` +
-    `_Notas y seguimiento vinculados automáticamente en tu [[Segundo Cerebro]]. ¡A por todas, Manuel!_`;
+    `• *Fecha del Examen:* *${examDateStr}* (Evento de *Todo el Día*)\n` +
+    `• *Sesiones:* *${assignedSlots.length} días* (máx. 1 sesión diaria, lo más temprano posible)\n` +
+    `• *Horas totales:* *${hoursAllocated.toFixed(1)}h* (${targetHours}h solicitadas)\n` +
+    `• *Estrategia:* ✅ _Prioridad entre semana (L-J), esquivando fines de semana_\n` +
+    `• *Aislamiento semanal:* ✅ _Modificación de ocurrencia única ("solo para una vez", semanas futuras intactas en verde)_\n\n` +
+    `📋 *Bloques de estudio asignados (más tempranos de cada día):*\n${slotsList}\n\n` +
+    `_Ficha y seguimiento registrados en tu [[Segundo Cerebro]]. ¡A por el examen, Manuel!_`;
 }
 
 // Helpers de control remoto del PC
@@ -732,7 +839,12 @@ REGLAS DE OPERACIÓN:
      2. Añade SIEMPRE al final de tu respuesta la etiqueta de acción:
         [ACCION_AGENDAR_ESTUDIO: Materia | Fecha_del_examen | Horas]
         (Ejemplos: [ACCION_AGENDAR_ESTUDIO: Lengua | en una semana | 4], [ACCION_AGENDAR_ESTUDIO: Matemáticas | 20 de octubre | 3.5]).
-     3. Explícale a Manuel que buscarás sus huecos libres verdes ("No title") hasta la fecha del examen, los renombrarás a "Estudio: Ex. [Materia]" en color azul de estudio, y confirmale que se modificará ÚNICAMENTE esa semana (para solo una vez), dejando las semanas futuras intactas.
+     3. Explícale a Manuel con tu tono refinado y eficiente las reglas aplicadas:
+        - Creas un evento de TODO EL DÍA para el examen.
+        - Distribuyes el estudio a máximo 1 hora diaria en días distintos antes del examen.
+        - Priorizas días entre semana (Lunes a Jueves) esquivando fines de semana (si faltan días: 1º Domingo, 2º Sábado, 3º Viernes).
+        - En cada día escoges el cuadrante libre más temprano posible.
+        - Se modifica ÚNICAMENTE esa semana ("para solo una vez"), dejando todas las semanas futuras intactas en verde.
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
