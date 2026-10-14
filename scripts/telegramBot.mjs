@@ -656,7 +656,8 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
   }
 
-  // REGLA 4: Registrar el examen como EVENTO DE TODO EL DÍA en Google Calendar
+  // REGLA 4: Registrar el examen como EVENTO DE TODO EL DÍA exclusivamente en el calendario oficial de Exámenes
+  // (NO se duplica en primary para evitar que aparezca 2 veces en la vista de Google Calendar de Manuel)
   let examCreated = false;
   try {
     const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
@@ -664,17 +665,16 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     const nextDay = new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate() + 1);
     const endDateStr = getDayKey(nextDay);
 
-    // En calendario oficial de Exámenes
-    await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
-      calendar_id: examCalId,
-      summary: `Examen: ${cleanMateria}`,
-      start_date: startDateStr,
-      end_date: endDateStr,
-      create_meeting_room: false,
-    });
-
-    // En calendario primario para que se vea en el banner superior
     try {
+      await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
+        calendar_id: examCalId,
+        summary: `Examen: ${cleanMateria}`,
+        start_date: startDateStr,
+        end_date: endDateStr,
+        create_meeting_room: false,
+      });
+    } catch (eCalErr) {
+      console.warn("[EXAM_CAL_FALLBACK] Error creando en calendario Exámenes, usando primary:", eCalErr.message);
       await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
         calendar_id: "primary",
         summary: `Examen: ${cleanMateria}`,
@@ -682,7 +682,7 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
         end_date: endDateStr,
         create_meeting_room: false,
       });
-    } catch {}
+    }
 
     examCreated = true;
   } catch (examErr) {
