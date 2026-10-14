@@ -560,6 +560,8 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
       if (selectedCandidates.length >= targetHours) break;
       selectedCandidates.push(item);
     }
+  }
+
   // Si faltan huecos respecto a targetHours, buscar huecos verdes secundarios reales en los días ya seleccionados
   if (selectedCandidates.length < targetHours) {
     console.log(`📅 [ESTUDIO EXAMEN] Buscando huecos verdes secundarios reales en días disponibles...`);
