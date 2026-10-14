@@ -455,9 +455,17 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
 
     const isGreen = item.colorId === "10";
-    const isUntitled = !summary || summary === "no title" || summary === "(sin título)" || summary === "sin título" || summary === "undefined" || summary === "";
+    const isFreeGreenBlock = isGreen && (
+      !summary ||
+      summary === "no title" ||
+      summary === "(sin título)" ||
+      summary === "sin título" ||
+      summary === "undefined" ||
+      summary === "bloque libre" ||
+      /^\d{1,2}:\d{2}/.test(summary)
+    );
 
-    if (isGreen && isUntitled) {
+    if (isFreeGreenBlock) {
       const start = new Date(item.start?.dateTime || item.start?.date);
       const end = new Date(item.end?.dateTime || item.end?.date);
 
@@ -552,62 +560,29 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
       if (selectedCandidates.length >= targetHours) break;
       selectedCandidates.push(item);
     }
-  }
-
-  // FALLBACK AUTÓNOMO: Si faltan huecos respecto a targetHours, crear automáticamente bloques de 1h
+  // Si faltan huecos respecto a targetHours, buscar huecos verdes secundarios reales en los días ya seleccionados
   if (selectedCandidates.length < targetHours) {
-    console.log(`📅 [ESTUDIO EXAMEN] Faltan ${targetHours - selectedCandidates.length} bloques. Creando huecos de estudio de respaldo...`);
-    const existingDays = new Set(selectedCandidates.map(c => c.dayKey));
-
-    // Generar días entre hoy/mañana y el examen
-    const candidateDays = [];
-    let cur = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    while (cur.getTime() < examDayStart.getTime()) {
-      const dKey = getDayKey(cur);
-      if (!existingDays.has(dKey)) {
-        candidateDays.push({ dayKey: dKey, date: new Date(cur) });
-      }
-      cur.setDate(cur.getDate() + 1);
-    }
-
-    const fbT1 = candidateDays.filter(c => c.date.getDay() >= 1 && c.date.getDay() <= 4);
-    const fbT2 = candidateDays.filter(c => c.date.getDay() === 0);
-    const fbT3 = candidateDays.filter(c => c.date.getDay() === 6);
-    const fbT4 = candidateDays.filter(c => c.date.getDay() === 5);
-
-    sortByProximity(fbT1);
-    sortByProximity(fbT2);
-    sortByProximity(fbT3);
-    sortByProximity(fbT4);
-
-    const needed = targetHours - selectedCandidates.length;
-    const additional = [];
-    for (const pool of [fbT1, fbT2, fbT3, fbT4]) {
+    console.log(`📅 [ESTUDIO EXAMEN] Buscando huecos verdes secundarios reales en días disponibles...`);
+    const usedIds = new Set(selectedCandidates.map(c => c.slot.id));
+    for (const pool of [tier1MonThu, tier2Sunday, tier3Saturday, tier4Friday]) {
       for (const item of pool) {
-        if (additional.length >= needed) break;
-        additional.push(item);
+        if (selectedCandidates.length >= targetHours) break;
+        const extraSlots = (slotsByDay[item.dayKey] || []).filter(s => !usedIds.has(s.id));
+        for (const s of extraSlots) {
+          if (selectedCandidates.length >= targetHours) break;
+          usedIds.add(s.id);
+          selectedCandidates.push({
+            dayKey: item.dayKey,
+            date: item.date,
+            slot: s,
+          });
+        }
       }
-      if (additional.length >= needed) break;
-    }
-
-    for (const add of additional) {
-      const dow = add.date.getDay();
-      const startH = (dow === 0 || dow === 6) ? 9 : 14;
-      const slotStart = new Date(add.date.getFullYear(), add.date.getMonth(), add.date.getDate(), startH, 0, 0);
-      const slotEnd = new Date(add.date.getFullYear(), add.date.getMonth(), add.date.getDate(), startH + 1, 0, 0);
-      selectedCandidates.push({
-        dayKey: add.dayKey,
-        date: add.date,
-        isNew: true,
-        slot: {
-          id: null,
-          start: slotStart,
-          end: slotEnd,
-          durationHours: 1,
-        },
-      });
     }
   }
+
+  // REGLA CRÍTICA: NUNCA inventar horas arbitrarias (como a las 14:00) ni fuera de los bloques verdes reales.
+  // Si no hay suficientes bloques verdes disponibles antes del examen, se aprovechan todos los existentes.
 
   // Ordenar cronológicamente (de pasado a futuro) para asignar en orden
   selectedCandidates.sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -657,7 +632,7 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
   }
 
   // REGLA 4: Registrar el examen como EVENTO DE TODO EL DÍA exclusivamente en el calendario oficial de Exámenes
-  // (NO se duplica en primary para evitar que aparezca 2 veces en la vista de Google Calendar de Manuel)
+  // (NUNCA se duplica en primary y NUNCA se agregan asistentes para evitar eventos punteados o duplicados)
   let examCreated = false;
   try {
     const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
@@ -665,7 +640,18 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     const nextDay = new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate() + 1);
     const endDateStr = getDayKey(nextDay);
 
-    try {
+    // Comprobar si ya existe un examen para esta materia en la fecha indicada
+    const existingExamRes = await composioSession.execute("GOOGLECALENDAR_FIND_EVENT", {
+      calendar_id: examCalId,
+      time_min: new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate() - 1).toISOString(),
+      time_max: new Date(examDate.getFullYear(), examDate.getMonth(), examDate.getDate() + 2).toISOString(),
+      single_events: true,
+      max_results: 20,
+    });
+    const existingList = existingExamRes?.data?.event_data?.event_data || existingExamRes?.data?.items || [];
+    const alreadyExists = existingList.some(e => (e.summary || "").toLowerCase().includes(cleanMateria.toLowerCase()));
+
+    if (!alreadyExists) {
       await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
         calendar_id: examCalId,
         summary: `Examen: ${cleanMateria}`,
@@ -673,15 +659,9 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
         end_date: endDateStr,
         create_meeting_room: false,
       });
-    } catch (eCalErr) {
-      console.warn("[EXAM_CAL_FALLBACK] Error creando en calendario Exámenes, usando primary:", eCalErr.message);
-      await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
-        calendar_id: "primary",
-        summary: `Examen: ${cleanMateria}`,
-        start_date: startDateStr,
-        end_date: endDateStr,
-        create_meeting_room: false,
-      });
+      console.log(`📅 [EXAMEN] Creado examen oficial de "${cleanMateria}" en calendario Exámenes (${startDateStr})`);
+    } else {
+      console.log(`📅 [EXAMEN] El examen de "${cleanMateria}" ya existe en el calendario Exámenes. Evitando duplicado.`);
     }
 
     examCreated = true;
@@ -1039,12 +1019,14 @@ REGLAS DE OPERACIÓN:
      2. Añade SIEMPRE al final de tu respuesta la etiqueta de acción:
         [ACCION_AGENDAR_ESTUDIO: Materia | Fecha_del_examen | Horas]
         (Ejemplos: [ACCION_AGENDAR_ESTUDIO: Lengua | en una semana | 4], [ACCION_AGENDAR_ESTUDIO: Matemáticas | 20 de octubre | 3.5]).
-     3. Explícale a Manuel con tu tono refinado y eficiente las reglas aplicadas:
-        - Creas un evento de TODO EL DÍA para el examen.
-        - Distribuyes el estudio a máximo 1 hora diaria en días distintos antes del examen.
-        - Priorizas días entre semana (Lunes a Jueves) esquivando fines de semana (si faltan días: 1º Domingo, 2º Sábado, 3º Viernes).
-        - En cada día escoges el cuadrante libre más temprano posible.
-        - Se modifica ÚNICAMENTE esa semana ("para solo una vez"), dejando todas las semanas futuras intactas en verde.
+      3. Explícale a Manuel con tu tono refinado y eficiente las reglas aplicadas:
+         - Creas un evento de TODO EL DÍA exclusivamente en el calendario oficial de 'Exámenes', nunca en 'Time Blocking' y sin duplicados ni asistentes.
+         - El estudio se agenda ÚNICAMENTE dentro de sus bloques verdes libres reales (colorId: 10).
+         - ESTRICTAMENTE PROHIBIDO inventar horas fuera de sus bloques verdes (como a las 14:00, que es horario de instituto/comida ocupado en marrón).
+         - Distribuyes el estudio a máximo 1 hora diaria en días distintos antes del examen.
+         - Priorizas días entre semana (Lunes a Jueves) esquivando fines de semana (si faltan días: 1º Domingo, 2º Sábado, 3º Viernes).
+         - En cada día escoges el cuadrante libre más temprano posible.
+         - Se modifica ÚNICAMENTE esa semana ('para solo una vez'), dejando todas las semanas futuras intactas en verde.
 
 ${toolContext ? `INFORMACIÓN DE HERRAMIENTAS EJECUTADAS EN VIVO:\n${toolContext}\n` : ""}
 
@@ -1955,9 +1937,15 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
 
       try {
         callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-        const { date: startDate, hasTime, isAllDay } = parseFlexibleDateTime(startStr, 18);
+        const isExamSummary = summary.toLowerCase().startsWith("examen") || summary.toLowerCase().startsWith("ex.");
+        const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
+        const targetCalId = isExamSummary ? examCalId : (calId || "primary");
+        const effectiveAllDay = isExamSummary ? true : isAllDay;
+
+        const { date: startDate, hasTime, isAllDay: parsedAllDay } = parseFlexibleDateTime(startStr, 18);
+        const finalAllDay = effectiveAllDay || parsedAllDay;
         let endDate;
-        if (endStr && !isAllDay) {
+        if (endStr && !finalAllDay) {
           if (endStr.includes("h") || endStr.includes("m") || endStr.includes("hora")) {
             const durMatch = endStr.match(/(\d+(?:\.\d+)?)\s*(?:h|hora)/i);
             const durHours = durMatch ? parseFloat(durMatch[1]) : 1;
@@ -1966,7 +1954,7 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
             const parsedEnd = parseFlexibleDateTime(endStr, startDate.getHours() + 1);
             endDate = parsedEnd.date;
           }
-        } else if (!isAllDay) {
+        } else if (!finalAllDay) {
           endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
         }
 
@@ -1974,8 +1962,8 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
           summary,
           start: startDate,
           end: endDate,
-          calendarId: calId,
-          isAllDay,
+          calendarId: targetCalId,
+          isAllDay: finalAllDay,
         });
 
         const dateFormatted = startDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
