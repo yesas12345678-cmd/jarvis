@@ -194,6 +194,78 @@ async function executeListCalendars() {
   return await composioSession.execute("GOOGLECALENDAR_LIST_CALENDARS", {});
 }
 
+async function executeCreateCalendarEvent({
+  summary,
+  start,
+  end,
+  calendarId = "primary",
+  description = "",
+  isAllDay = false,
+}) {
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+
+  const payload = {
+    calendar_id: calendarId || "primary",
+    summary: summary || "Nuevo evento",
+    create_meeting_room: false,
+  };
+  if (description) payload.description = description;
+
+  if (isAllDay) {
+    const startDateStr = typeof start === "string" && start.length === 10 ? start : getDayKey(start);
+    let endDateStr = end ? (typeof end === "string" && end.length === 10 ? end : getDayKey(end)) : startDateStr;
+    if (startDateStr === endDateStr) {
+      const d = new Date(startDateStr);
+      d.setDate(d.getDate() + 1);
+      endDateStr = getDayKey(d);
+    }
+    payload.start_date = startDateStr;
+    payload.end_date = endDateStr;
+  } else {
+    const startIso = (start instanceof Date ? start : new Date(start)).toISOString();
+    let endIso;
+    if (end) {
+      endIso = (end instanceof Date ? end : new Date(end)).toISOString();
+    } else {
+      const d = new Date(startIso);
+      d.setHours(d.getHours() + 1);
+      endIso = d.toISOString();
+    }
+    payload.start_date_time = startIso;
+    payload.end_date_time = endIso;
+  }
+
+  return await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", payload);
+}
+
+async function executeFindCalendarEvents({
+  calendarId = "primary",
+  query = "",
+  timeMin,
+  timeMax,
+  maxResults = 25,
+} = {}) {
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+  const now = new Date();
+  const payload = {
+    calendar_id: calendarId || "primary",
+    time_min: timeMin || now.toISOString(),
+    time_max: timeMax || new Date(now.getTime() + 14 * 24 * 3600 * 1000).toISOString(),
+    single_events: true,
+    max_results: maxResults,
+  };
+  if (query) payload.query = query;
+  return await composioSession.execute("GOOGLECALENDAR_FIND_EVENT", payload);
+}
+
+async function executeDeleteCalendarEvent(eventId, calendarId = "primary") {
+  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+  return await composioSession.execute("GOOGLECALENDAR_DELETE_EVENT", {
+    calendar_id: calendarId || "primary",
+    event_id: eventId,
+  });
+}
+
 // ==========================================
 // GESTIÓN DE EXÁMENES Y ESTUDIO EN GOOGLE CALENDAR
 // ==========================================
@@ -310,6 +382,45 @@ function getDayKey(date) {
   return `${year}-${month}-${day}`;
 }
 
+function parseFlexibleDateTime(str, defaultHour = 10) {
+  if (!str) return { date: new Date(), hasTime: false, isAllDay: false };
+  const raw = String(str).trim();
+  const lower = raw.toLowerCase();
+  const isAllDay = lower.includes("todo el d") || lower.includes("all day");
+
+  // Si viene en formato ISO (YYYY-MM-DDTHH:mm o YYYY-MM-DD HH:mm)
+  if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(raw)) {
+    const d = new Date(raw.replace(" ", "T"));
+    if (!isNaN(d.getTime())) return { date: d, hasTime: true, isAllDay };
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [y, m, d] = raw.split("-").map(Number);
+    const dateObj = new Date(y, m - 1, d, defaultHour, 0, 0);
+    return { date: dateObj, hasTime: false, isAllDay: true };
+  }
+
+  // Buscar hora explícita: "18:30", "18h30", "18h", "6:30 pm", "a las 18:30"
+  let hours = defaultHour;
+  let minutes = 0;
+  let hasTime = false;
+  const timeRegex = /(?:a\s+las\s+|las\s+)?(\d{1,2})(?::|h)?(\d{2})?\s*(am|pm|h)?(?:\s|$)/i;
+  const timeMatch = raw.match(timeRegex);
+  let cleanedStr = raw;
+
+  if (timeMatch && (timeMatch[0].includes(":") || timeMatch[0].includes("h") || timeMatch[0].includes("las") || timeMatch[3])) {
+    hours = parseInt(timeMatch[1], 10);
+    minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    const ampm = timeMatch[3]?.toLowerCase();
+    if (ampm === "pm" && hours < 12) hours += 12;
+    if (ampm === "am" && hours === 12) hours = 0;
+    hasTime = true;
+    cleanedStr = raw.replace(timeMatch[0], " ").trim();
+  }
+
+  const baseDate = parseSpanishExamDate(cleanedStr || raw);
+  const resultDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), hours, minutes, 0);
+  return { date: resultDate, hasTime, isAllDay };
+}
+
 async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas, chatId }) {
   if (!composioSession) {
     throw new Error("Sesión de Composio no inicializada.");
@@ -344,7 +455,7 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
 
     const isGreen = item.colorId === "10";
-    const isUntitled = !summary || summary === "no title" || summary === "(sin título)" || summary === "sin título";
+    const isUntitled = !summary || summary === "no title" || summary === "(sin título)" || summary === "sin título" || summary === "undefined" || summary === "";
 
     if (isGreen && isUntitled) {
       const start = new Date(item.start?.dateTime || item.start?.date);
@@ -377,18 +488,6 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
   }
 
   const availableDays = Object.keys(bestSlotPerDay);
-
-  if (availableDays.length === 0) {
-    return {
-      success: false,
-      message: `No he encontrado huecos verdes libres ("No title") en tu calendario Time Blocking antes del examen del ${examDate.toLocaleDateString("es-ES")}.`,
-      assignedSlots: [],
-      hoursAllocated: 0,
-      targetHours,
-      materia: cleanMateria,
-      examDate,
-    };
-  }
 
   // REGLA 3: Prioridad de días para esquivar fines de semana
   // Tier 1: Lunes a Jueves (lunes=1, martes=2, miércoles=3, jueves=4) -> Óptimo entre semana
@@ -455,6 +554,61 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
     }
   }
 
+  // FALLBACK AUTÓNOMO: Si faltan huecos respecto a targetHours, crear automáticamente bloques de 1h
+  if (selectedCandidates.length < targetHours) {
+    console.log(`📅 [ESTUDIO EXAMEN] Faltan ${targetHours - selectedCandidates.length} bloques. Creando huecos de estudio de respaldo...`);
+    const existingDays = new Set(selectedCandidates.map(c => c.dayKey));
+
+    // Generar días entre hoy/mañana y el examen
+    const candidateDays = [];
+    let cur = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    while (cur.getTime() < examDayStart.getTime()) {
+      const dKey = getDayKey(cur);
+      if (!existingDays.has(dKey)) {
+        candidateDays.push({ dayKey: dKey, date: new Date(cur) });
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+
+    const fbT1 = candidateDays.filter(c => c.date.getDay() >= 1 && c.date.getDay() <= 4);
+    const fbT2 = candidateDays.filter(c => c.date.getDay() === 0);
+    const fbT3 = candidateDays.filter(c => c.date.getDay() === 6);
+    const fbT4 = candidateDays.filter(c => c.date.getDay() === 5);
+
+    sortByProximity(fbT1);
+    sortByProximity(fbT2);
+    sortByProximity(fbT3);
+    sortByProximity(fbT4);
+
+    const needed = targetHours - selectedCandidates.length;
+    const additional = [];
+    for (const pool of [fbT1, fbT2, fbT3, fbT4]) {
+      for (const item of pool) {
+        if (additional.length >= needed) break;
+        additional.push(item);
+      }
+      if (additional.length >= needed) break;
+    }
+
+    for (const add of additional) {
+      const dow = add.date.getDay();
+      const startH = (dow === 0 || dow === 6) ? 9 : 14;
+      const slotStart = new Date(add.date.getFullYear(), add.date.getMonth(), add.date.getDate(), startH, 0, 0);
+      const slotEnd = new Date(add.date.getFullYear(), add.date.getMonth(), add.date.getDate(), startH + 1, 0, 0);
+      selectedCandidates.push({
+        dayKey: add.dayKey,
+        date: add.date,
+        isNew: true,
+        slot: {
+          id: null,
+          start: slotStart,
+          end: slotEnd,
+          durationHours: 1,
+        },
+      });
+    }
+  }
+
   // Ordenar cronológicamente (de pasado a futuro) para asignar en orden
   selectedCandidates.sort((a, b) => a.date.getTime() - b.date.getTime());
 
@@ -465,22 +619,40 @@ async function scheduleExamStudySlots({ materia, fechaExamenStr, horasRequeridas
   for (const item of selectedCandidates) {
     const slot = item.slot;
     try {
-      await composioSession.execute("GOOGLECALENDAR_PATCH_EVENT", {
-        calendar_id: "primary",
-        event_id: slot.id,
-        summary: studyTitle,
-        color_id: "9", // Blueberry / Estudio
-      });
+      if (item.isNew || !slot.id) {
+        const createRes = await composioSession.execute("GOOGLECALENDAR_CREATE_EVENT", {
+          calendar_id: "primary",
+          summary: studyTitle,
+          start_date_time: slot.start.toISOString(),
+          end_date_time: slot.end.toISOString(),
+          create_meeting_room: false,
+        });
+        const createdId = createRes?.data?.id || createRes?.data?.event_data?.id || `nuevo-${Math.random()}`;
+        hoursAllocated += slot.durationHours;
+        assignedSlots.push({
+          id: createdId,
+          start: slot.start,
+          end: slot.end,
+          durationHours: slot.durationHours,
+        });
+      } else {
+        await composioSession.execute("GOOGLECALENDAR_PATCH_EVENT", {
+          calendar_id: "primary",
+          event_id: slot.id,
+          summary: studyTitle,
+          color_id: "9", // Blueberry / Estudio
+        });
 
-      hoursAllocated += slot.durationHours;
-      assignedSlots.push({
-        id: slot.id,
-        start: slot.start,
-        end: slot.end,
-        durationHours: slot.durationHours,
-      });
+        hoursAllocated += slot.durationHours;
+        assignedSlots.push({
+          id: slot.id,
+          start: slot.start,
+          end: slot.end,
+          durationHours: slot.durationHours,
+        });
+      }
     } catch (patchErr) {
-      console.warn(`[CALENDAR_PATCH_WARN] Error asignando hueco ${slot.id}:`, patchErr.message);
+      console.warn(`[CALENDAR_SLOT_WARN] Error asignando hueco ${slot.id}:`, patchErr.message);
     }
   }
 
@@ -819,7 +991,20 @@ REGLAS DE OPERACIÓN:
 4. ACCIONES REALES DE CORREO:
    - Si Manuel te ordena enviar un correo a alguien, extrae los parámetros e incluye al final: [ACCION_EMAIL: destinatario@correo.com | Asunto | Contenido].
    - Si te pide revisar o leer correos, incluye al final: [ACCION_LEER_EMAILS: max 5].
-   - Si te pide revisar calendario, incluye al final: [ACCION_CALENDARIO].
+
+4.1. GESTIÓN AUTÓNOMA DE CITAS Y EVENTOS EN GOOGLE CALENDAR:
+   - Tienes control TOTAL sobre Google Calendar de Manuel (${primaryGmailAddress || "yesas12345678@gmail.com"}).
+   - Si Manuel te pide agendar cualquier cita personal, médica, estética, reunión, evento o recordatorio (ej: "cita para el entrecejo el viernes a las 18:30", "apúntame dentista mañana a las 11:00", "cena el sábado a las 21:00", etc.):
+     * Extrae: Título | Inicio | Fin_o_duracion | Calendario
+     * Añade SIEMPRE la etiqueta al final:
+       [ACCION_CALENDARIO_CREAR: Titulo | Inicio | Fin_o_duracion | Calendario]
+       (Ejemplos: [ACCION_CALENDARIO_CREAR: Cita entrecejo | 2026-10-16 18:30 | 1h | primary], [ACCION_CALENDARIO_CREAR: Dentista | mañana a las 10:00 | 1h | primary]).
+     * Si no especifica duración, por defecto pon "1h". Si es de todo el día, pon "todo el dia".
+   - Si Manuel te pregunta por sus citas, eventos o qué tiene en su agenda:
+     * Añade SIEMPRE al final: [ACCION_CALENDARIO] o [ACCION_CALENDARIO_LISTAR: hoy | 7 dias] para que el sistema consulte Google Calendar en tiempo real y muestre los eventos reales confirmados.
+   - Si Manuel te pide borrar una cita:
+     * Añade: [ACCION_CALENDARIO_BORRAR: EventId | primary].
+   - PROHIBIDO ABSOLUTAMENTE DECIRLE A MANUEL QUE HAS AGENDADO UNA CITA SIN INCLUIR LA ETIQUETA [ACCION_CALENDARIO_CREAR: ...]. Si no incluyes la etiqueta, el sistema no la guardará y será una alucinación falsa.
 5. NUNCA digas que te falta la API key de Composio: YA LA TIENES y las integraciones están activas en tiempo real.
 6. ROL CLAVE EN DESARROLLO Y PROGRAMACIÓN:
    - Tú eres el Chief of Staff y Orquestador Supremo. Tú NO programas código directamente ni pretendes programar software por tu cuenta.
@@ -843,6 +1028,7 @@ REGLAS DE OPERACIÓN:
 8. PROHIBIDO ALUCINAR O SIMULAR EJECUCIÓN (REGLA DE VERACIDAD ABSOLUTA):
    - NUNCA inventes porcentajes de progreso falsos (como "60%", "90%", "100%"). Si no hay un proceso técnico cuantificado corriendo, di la verdad.
    - NUNCA inventes enlaces web, URLs de despliegue o confirmaciones ficticias de sitios publicados si no has recibido una respuesta real verificada de la API.
+   - NUNCA afirmes que has registrado una cita o evento en Google Calendar sin usar [ACCION_CALENDARIO_CREAR: ...] o [ACCION_AGENDAR_ESTUDIO: ...].
    - Si se te pide desarrollar una web o proyecto, NO finjas que lo estás haciendo mentalmente: asigna la tarea técnica real a Antigravity con [ACCION_PC_CODE: ...] o di claramente que necesitas confirmación para lanzar el proceso real.
 
 9. GESTIÓN Y AGENDADO DE ESTUDIO PARA EXÁMENES EN GOOGLE CALENDAR:
@@ -1216,6 +1402,69 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
     }
   }
 
+  if (userText === "/calendario" || userText === "/citas" || userText === "/agenda") {
+    callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+    try {
+      const eventsRes = await executeFindCalendarEvents({
+        timeMin: new Date().toISOString(),
+        timeMax: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+        maxResults: 20,
+      });
+      const items = eventsRes?.data?.event_data?.event_data || eventsRes?.data?.items || [];
+      const validItems = items.filter(it => it.summary && it.summary !== "undefined" && it.summary !== "no title" && it.summary !== "(sin título)");
+      if (validItems.length > 0) {
+        const list = validItems.map(it => {
+          const startStr = it.start?.dateTime || it.start?.date;
+          const d = new Date(startStr);
+          const day = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+          const time = it.start?.dateTime ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "Todo el día";
+          return `• *${day}* \`${time}\` — *${it.summary}*`;
+        }).join("\n");
+        await sendTextMessage(chatId, `📅 *Eventos en Google Calendar (Próximos 7 días):*\n\n${list}`);
+      } else {
+        await sendTextMessage(chatId, `📅 *Google Calendar:* No tienes eventos ni citas registradas en los próximos 7 días.`);
+      }
+    } catch (err) {
+      await sendTextMessage(chatId, `⚠️ Error consultando Google Calendar: ${err.message}`);
+    }
+    return;
+  }
+
+  if (userText.startsWith("/cita ") || userText.startsWith("/crear_cita ")) {
+    const raw = userText.replace(/^\/(cita|crear_cita)\s+/, "").trim();
+    const parts = raw.split("|");
+    const summary = parts[0]?.trim();
+    const fechaHora = parts[1]?.trim();
+    const duracion = parts[2]?.trim();
+    if (summary && fechaHora) {
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      try {
+        const { date: startDate, hasTime, isAllDay } = parseFlexibleDateTime(fechaHora, 18);
+        let endDate;
+        if (duracion && !isAllDay) {
+          const durMatch = duracion.match(/(\d+(?:\.\d+)?)\s*(?:h|hora)/i);
+          const durHours = durMatch ? parseFloat(durMatch[1]) : 1;
+          endDate = new Date(startDate.getTime() + durHours * 3600 * 1000);
+        } else if (!isAllDay) {
+          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        }
+        await executeCreateCalendarEvent({
+          summary,
+          start: startDate,
+          end: endDate,
+          calendarId: "primary",
+          isAllDay,
+        });
+        const dateFormatted = startDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+        const timeFormatted = isAllDay ? "Todo el día" : `${startDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} - ${endDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
+        await sendTextMessage(chatId, `📅 *Cita registrada en Google Calendar:*\n• *Evento:* *${summary}*\n• *Fecha:* ${dateFormatted}\n• *Horario:* \`${timeFormatted}\``);
+      } catch (err) {
+        await sendTextMessage(chatId, `⚠️ Error creando cita: ${err.message}`);
+      }
+      return;
+    }
+  }
+
   if (userText === "/start" || userText === "/ayuda") {
     const welcome = `⚡ *Núcleo JUDE Activo // Enlace Telegram*\n\n` +
       `Hola, *${USER_NAME}*. Estoy conectado y listo para responder a tus órdenes incluso con tu ordenador apagado.\n\n` +
@@ -1522,18 +1771,29 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
   }
 
   if (
-    (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos")) &&
-    (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("mis"))
+    (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos") || lower.includes("cita") || lower.includes("entrecejo") || lower.includes("examen")) &&
+    (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("que") || lower.includes("tengo") || lower.includes("mis") || lower.includes("dónde") || lower.includes("donde") || lower.includes("cuándo") || lower.includes("cuando") || lower.includes("hay"))
   ) {
     try {
       callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const calRes = await executeListCalendars();
-      if (calRes?.data?.calendars) {
-        const calList = calRes.data.calendars.map((c) => `- ${c.summary || c.id} (Zona: ${c.timeZone})`).join("\n");
-        toolContext = `CALENDARIOS DISPONIBLES DE MANUEL:\n${calList}`;
+      const eventsRes = await executeFindCalendarEvents({
+        timeMin: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+        timeMax: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+        maxResults: 25,
+      });
+      const items = eventsRes?.data?.event_data?.event_data || eventsRes?.data?.items || [];
+      const validItems = items.filter(it => it.summary && it.summary !== "undefined" && it.summary !== "no title" && it.summary !== "(sin título)");
+      if (validItems.length > 0) {
+        const list = validItems.map(it => {
+          const s = it.start?.dateTime || it.start?.date;
+          return `- "${it.summary}" (${s})`;
+        }).join("\n");
+        toolContext = `EVENTOS Y CITAS REALES ACTUALES EN GOOGLE CALENDAR:\n${list}`;
+      } else {
+        toolContext = "GOOGLE CALENDAR: No hay eventos ni citas agendadas en los próximos 14 días.";
       }
     } catch (err) {
-      toolContext = `ERROR CONSULTANDO CALENDARIO: ${err.message}`;
+      toolContext = `ERROR CONSULTANDO EVENTOS DE GOOGLE CALENDAR: ${err.message}`;
     }
   }
 
@@ -1678,6 +1938,106 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
       } catch (studyErr) {
         console.error("[CALENDAR_STUDY_ERROR]", studyErr);
         aiReply += `\n\n⚠️ _Error al agendar en Google Calendar:_ ${studyErr.message}`;
+      }
+    }
+
+    // Detectar acción de crear evento o cita en Google Calendar
+    const createCalMatch = aiReply.match(/\[(?:ACCION_CALENDARIO_CREAR|ACCION_CREAR_EVENTO|ACCION_CALENDAR:\s*create_event):\s*(.*?)\]/i) ||
+      aiReply.match(/ACCION_CALENDAR:\s*create_event\s*(.*?)(?:\n|$)/i);
+    if (createCalMatch) {
+      const rawParams = createCalMatch[1].trim();
+      aiReply = aiReply.replace(createCalMatch[0], "").trim();
+      const parts = rawParams.split("|").map(p => p.trim());
+      const summary = parts[0] || "Cita";
+      const startStr = parts[1] || "";
+      const endStr = parts[2] || "";
+      const calId = parts[3] || "primary";
+
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        const { date: startDate, hasTime, isAllDay } = parseFlexibleDateTime(startStr, 18);
+        let endDate;
+        if (endStr && !isAllDay) {
+          if (endStr.includes("h") || endStr.includes("m") || endStr.includes("hora")) {
+            const durMatch = endStr.match(/(\d+(?:\.\d+)?)\s*(?:h|hora)/i);
+            const durHours = durMatch ? parseFloat(durMatch[1]) : 1;
+            endDate = new Date(startDate.getTime() + durHours * 3600 * 1000);
+          } else {
+            const parsedEnd = parseFlexibleDateTime(endStr, startDate.getHours() + 1);
+            endDate = parsedEnd.date;
+          }
+        } else if (!isAllDay) {
+          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        }
+
+        await executeCreateCalendarEvent({
+          summary,
+          start: startDate,
+          end: endDate,
+          calendarId: calId,
+          isAllDay,
+        });
+
+        const dateFormatted = startDate.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+        const timeFormatted = isAllDay ? "Todo el día" : `${startDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} - ${endDate.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}`;
+
+        aiReply += `\n\n📅 *Cita registrada en Google Calendar*\n• *Evento:* *${summary}*\n• *Fecha:* ${dateFormatted}\n• *Horario:* \`${timeFormatted}\`\n• *Calendario:* \`${calId}\``;
+
+        const pc = await getPcStatus();
+        if (pc.online) {
+          const noteContent = `# Cita: [[${summary}]]\n\n- **Fecha:** ${dateFormatted}\n- **Horario:** ${timeFormatted}\n- **Calendario:** ${calId}\n- **Estado:** Agendado\n\n---\n*Sincronizado automáticamente por [[Jude]]*`;
+          await sendPcObsidianNote("Citas", `${summary.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ]/g, "_")}.md`, noteContent);
+        }
+      } catch (calErr) {
+        console.error("[CALENDAR_CREATE_ERROR]", calErr);
+        aiReply += `\n\n⚠️ _Error al guardar en Google Calendar:_ ${calErr.message}`;
+      }
+    }
+
+    // Detectar consulta o listado de eventos en Google Calendar
+    const listCalMatch = aiReply.match(/\[(?:ACCION_CALENDARIO_LISTAR|ACCION_CALENDARIO):\s*(.*?)\]/i) ||
+      aiReply.match(/\[ACCION_CALENDARIO\]/i) ||
+      aiReply.match(/\bACCION_CALENDARIO\b/i);
+    if (listCalMatch) {
+      aiReply = aiReply.replace(listCalMatch[0], "").trim();
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        const eventsRes = await executeFindCalendarEvents({
+          timeMin: new Date().toISOString(),
+          timeMax: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+          maxResults: 15,
+        });
+        const items = eventsRes?.data?.event_data?.event_data || eventsRes?.data?.items || [];
+        const validItems = items.filter(it => it.summary && it.summary !== "undefined" && it.summary !== "no title" && it.summary !== "(sin título)");
+        if (validItems.length > 0) {
+          const list = validItems.map(it => {
+            const startStr = it.start?.dateTime || it.start?.date;
+            const d = new Date(startStr);
+            const day = d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" });
+            const time = it.start?.dateTime ? d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "Todo el día";
+            return `• *${day}* \`${time}\` — *${it.summary}*`;
+          }).join("\n");
+          aiReply += `\n\n📅 *Eventos en tu Google Calendar (Próximos 7 días):*\n${list}`;
+        } else {
+          aiReply += `\n\n📅 *Google Calendar:* No tienes citas ni eventos registrados en los próximos 7 días.`;
+        }
+      } catch (err) {
+        console.warn("[CALENDAR_LIST_WARN]", err.message);
+      }
+    }
+
+    // Detectar eliminación de evento de Google Calendar
+    const deleteCalMatch = aiReply.match(/\[ACCION_CALENDARIO_BORRAR:\s*(.*?)(?:\s*\|\s*(.*?))?\]/i);
+    if (deleteCalMatch) {
+      const eventId = deleteCalMatch[1].trim();
+      const calId = deleteCalMatch[2]?.trim() || "primary";
+      aiReply = aiReply.replace(deleteCalMatch[0], "").trim();
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        await executeDeleteCalendarEvent(eventId, calId);
+        aiReply += `\n\n🗑️ *Evento eliminado de Google Calendar* (\`${eventId}\`)`;
+      } catch (delErr) {
+        aiReply += `\n\n⚠️ _Error al eliminar evento:_ ${delErr.message}`;
       }
     }
 
