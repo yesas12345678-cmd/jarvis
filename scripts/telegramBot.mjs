@@ -1100,14 +1100,14 @@ ${memories.length > 0 ? memories.map((m) => `• ${m}`).join("\n") : "• Ningun
           systemInstruction,
           generationConfig: {
             temperature: 0.6,
-            maxOutputTokens: 800,
+            maxOutputTokens: 8192,
           },
         });
 
-        // Timeout de 7 segundos por intento para garantizar respuesta instantánea
+        // Timeout de 20 segundos por intento para permitir tiempo de razonamiento y respuesta completa
         const generatePromise = model.generateContent({ contents: formattedContents });
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout en ${modelName}`)), 7000)
+          setTimeout(() => reject(new Error(`Timeout en ${modelName}`)), 20000)
         );
 
         const result = await Promise.race([generatePromise, timeoutPromise]);
