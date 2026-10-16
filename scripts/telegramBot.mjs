@@ -53,6 +53,15 @@ let composio = null;
 let composioSession = null;
 let composioUserId = null;
 
+const GMAIL_ACCOUNTS_MAP = {
+  "yesas12345678@gmail.com": "ca_oJUXgzsFAz8_",
+  "yesas": "ca_oJUXgzsFAz8_",
+  "lopezserranojosemanuel20041@gmail.com": "ca_X4iCO1TKebhQ",
+  "lopezserranojosemanuel2004@gmail.com": "ca_7z6g3H4f6-WK"
+};
+const DEFAULT_PRIMARY_GMAIL = "yesas12345678@gmail.com";
+let lastDailyEmailReportDate = null;
+
 const TOOLKIT_METADATA = {
   gmail: { name: "Gmail", icon: "📧", desc: "Gestión, lectura y envío de correos" },
   googlecalendar: { name: "Google Calendar", icon: "📅", desc: "Agenda, citas y eventos" },
@@ -173,20 +182,44 @@ async function initComposio() {
 }
 
 // Helpers de ejecución
-async function executeSendEmail(recipient, subject, body) {
-  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
-  return await composioSession.execute("GMAIL_SEND_EMAIL", {
+async function getComposioGmailSession(accountIdentifier) {
+  if (!composio) await initComposio();
+  if (!composio) throw new Error("Composio no disponible.");
+  let accId = "ca_oJUXgzsFAz8_";
+  if (accountIdentifier) {
+    const key = accountIdentifier.toLowerCase().trim();
+    if (GMAIL_ACCOUNTS_MAP[key]) {
+      accId = GMAIL_ACCOUNTS_MAP[key];
+    } else if (key.includes("20041") || (key.includes("lopez") && key.includes("1"))) {
+      accId = "ca_X4iCO1TKebhQ";
+    } else if (key.includes("lopez") || key.includes("2004")) {
+      accId = "ca_7z6g3H4f6-WK";
+    }
+  }
+  return await composio.create(composioUserId || "pg-test-10ba854f-9c9f-4d58-bd34-57888a816003", {
+    connectedAccounts: { gmail: accId }
+  });
+}
+
+async function executeSendEmail(recipient, subject, body, targetAccount = null) {
+  const session = await getComposioGmailSession(targetAccount || DEFAULT_PRIMARY_GMAIL);
+  return await session.execute("GMAIL_SEND_EMAIL", {
     recipient_email: recipient,
     subject: subject || "Mensaje de Manuel",
     body: body || "",
   });
 }
 
-async function executeFetchEmails(maxResults = 5, query = "") {
-  if (!composioSession) throw new Error("Sesión de Composio no inicializada.");
+async function executeFetchEmails(maxResults = 5, query = "", targetAccount = null) {
+  const session = await getComposioGmailSession(targetAccount || DEFAULT_PRIMARY_GMAIL);
   const params = { max_results: maxResults };
   if (query) params.query = query;
-  return await composioSession.execute("GMAIL_FETCH_EMAILS", params);
+  return await session.execute("GMAIL_FETCH_EMAILS", params);
+}
+
+async function executeMoveEmailToTrash(messageId, targetAccount = null) {
+  const session = await getComposioGmailSession(targetAccount || DEFAULT_PRIMARY_GMAIL);
+  return await session.execute("GMAIL_MOVE_TO_TRASH", { message_id: messageId });
 }
 
 async function executeListCalendars() {
@@ -734,6 +767,195 @@ function formatStudyScheduleReport(result) {
     `_Ficha y seguimiento registrados en tu [[Segundo Cerebro]]. ¡A por el examen, Manuel!_`;
 }
 
+// =====================================================================
+// GESTIÓN INTELIGENTE DE CORREO: LIMPIEZA DE SPAM, RESUMEN Y CRON 7:00 AM
+// =====================================================================
+const PROTECTED_SENDERS = [
+  "gitguardian", "github", "dokploy", "netlify", "vercel", "stripe",
+  "payoneer", "bbva", "santander", "caixa", "revolut", "banco",
+  "google", "apple", "microsoft", "antigravity", "examen", "universidad"
+];
+
+function isLikelySpamEmail(msg) {
+  const sender = (msg.sender || "").toLowerCase();
+  const subject = (msg.subject || "").toLowerCase();
+  const labels = msg.labelIds || [];
+
+  for (const prot of PROTECTED_SENDERS) {
+    if (sender.includes(prot) || subject.includes(prot)) {
+      return false;
+    }
+  }
+
+  if (labels.includes("SPAM") || labels.includes("CATEGORY_PROMOTIONS")) {
+    return true;
+  }
+
+  const spamKeywords = [
+    "aliexpress", "temu", "shein", "descuento", "oferta", "rebajas",
+    "promoción", "promocion", "newsletter", "unsubscribe", "stories-recap",
+    "superdeal", "cupón", "cupon", "marketing"
+  ];
+  return spamKeywords.some(kw => sender.includes(kw) || subject.includes(kw));
+}
+
+async function cleanSpamAndSummarizeGmail({ targetChatId = TELEGRAM_ALLOWED_USER_ID, isScheduled = false } = {}) {
+  const accountsToScan = [
+    { email: "yesas12345678@gmail.com", role: "Desarrollo / Principal" },
+    { email: "lopezserranojosemanuel20041@gmail.com", role: "Personal" }
+  ];
+
+  const allImportant = [];
+  const allSpam = [];
+  const trashedItems = [];
+
+  for (const acc of accountsToScan) {
+    try {
+      const session = await getComposioGmailSession(acc.email);
+      const res = await session.execute("GMAIL_FETCH_EMAILS", { max_results: 15, query: "is:unread" });
+      const messages = res?.data?.messages || [];
+
+      for (const m of messages) {
+        if (isLikelySpamEmail(m)) {
+          allSpam.push({
+            account: acc.email,
+            id: m.messageId,
+            sender: m.sender || "Desconocido",
+            subject: m.subject || "Sin asunto"
+          });
+          try {
+            await session.execute("GMAIL_MOVE_TO_TRASH", { message_id: m.messageId });
+            trashedItems.push(`${m.sender || "Desconocido"} (${m.subject || "Sin asunto"})`);
+          } catch (trashErr) {
+            console.warn(`[GMAIL TRASH WARN] Error al mover a papelera ${m.messageId}:`, trashErr.message);
+          }
+        } else {
+          const preview = m.preview?.body?.slice(0, 180) || (m.messageText ? m.messageText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 180) : "");
+          allImportant.push({
+            account: acc.email,
+            role: acc.role,
+            id: m.messageId,
+            sender: m.sender || "Desconocido",
+            subject: m.subject || "Sin asunto",
+            preview
+          });
+        }
+      }
+    } catch (accErr) {
+      console.warn(`[GMAIL SCAN WARN] Error escaneando ${acc.email}:`, accErr.message);
+    }
+  }
+
+  const prompt = `Eres Jude, el asistente personal de alta gama de Manuel.
+${isScheduled ? "Son exactamente las 7:00 AM en España (Madrid) y le entregas su reporte matutino programado." : "Manuel te ha solicitado una revisión y limpieza de sus correos."}
+Analiza los datos reales recibidos y redacta un informe ejecutivo conciso, refinado y directo.
+
+REGLAS ESTRICTAS DE VERACIDAD:
+1. NUNCA inventes correos que no estén en la lista. Si no hay correos importantes, dilo con total transparencia.
+2. Agrupa por bloques útiles:
+   - 🛡️ Alertas Técnicas y Seguridad (GitGuardian, Netlify, Dokploy, GitHub, etc.)
+   - 💳 Finanzas y Servicios (Bancos, Payoneer, Stripe, suscripciones)
+   - 🎓 Universidad, Exámenes y Personal
+   - 📬 Otras Comunicaciones
+3. Informa de la limpieza de spam:
+   - 🗑️ Limpieza de Spam: Detalla cuántos correos promocionales fueron movidos a la papelera (${trashedItems.length} eliminados).
+
+DATOS REALES RECIBIDOS:
+CORREOS IMPORTANTES (${allImportant.length}):
+${JSON.stringify(allImportant, null, 2)}
+
+SPAM ELIMINADO (${trashedItems.length}):
+${trashedItems.slice(0, 6).join("\n") || "Ninguno en esta ocasión."}
+`;
+
+  let reportText = null;
+  const modelsToTry = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash"
+  ];
+
+  for (const modName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({ model: modName });
+      const aiRes = await model.generateContent(prompt);
+      reportText = aiRes.response.text();
+      if (reportText) break;
+    } catch (e) {
+      console.warn(`[GEMINI SUMMARY WARN] Modelo ${modName} falló:`, e.message);
+    }
+  }
+
+  if (!reportText) {
+    const impList = allImportant.length > 0
+      ? allImportant.map(m => `• *${m.sender}*: *${m.subject}*\n  _${m.preview}_`).join("\n\n")
+      : "• No hay correos importantes pendientes en tu bandeja de entrada.";
+    reportText = `☕ *Buenos días, Manuel. Reporte Ejecutivo de Correo (07:00)*\n\n` +
+      `📬 *Correos Relevantes:*\n${impList}\n\n` +
+      `🗑️ *Limpieza de Spam:* Se han detectado y movido a la papelera *${trashedItems.length}* correos publicitarios.`;
+  }
+
+  if (targetChatId) {
+    await sendTextMessage(targetChatId, reportText);
+  }
+
+  // Registrar en Segundo Cerebro (Obsidian)
+  try {
+    const pc = await getPcStatus();
+    if (pc.online) {
+      const now = new Date();
+      const dateStr = now.toISOString().split("T")[0];
+      const obsidianContent = `# Reporte Ejecutivo de Correo - ${dateStr}\n\n` +
+        `**Hora:** 07:00 (Europe/Madrid)\n` +
+        `**Estado:** Procesado y filtrado automáticamente por [[Jude]]\n\n` +
+        `---\n\n` +
+        `${reportText}\n\n` +
+        `---\n*Registro automático del Asistente [[Jude]] para [[Manuel]]*`;
+      await sendPcObsidianNote("01 - Registros/Correos", `Reporte_Gmail_${dateStr}.md`, obsidianContent);
+    }
+  } catch (obsErr) {
+    console.warn("[OBSIDIAN SAVE WARN]", obsErr.message);
+  }
+
+  return reportText;
+}
+
+// Temporizador Cron Diario a las 07:00 AM Europe/Madrid
+function checkScheduledTasks() {
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/Madrid",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+    const parts = Object.fromEntries(formatter.formatToParts(now).map(p => [p.type, p.value]));
+    const madridDate = `${parts.year}-${parts.month}-${parts.day}`;
+    const hour = parseInt(parts.hour, 10);
+    const minute = parseInt(parts.minute, 10);
+
+    if (hour === 7 && minute === 0 && lastDailyEmailReportDate !== madridDate) {
+      lastDailyEmailReportDate = madridDate;
+      console.log(`⏰ [CRON 7:00 AM] Disparando revisión matutina de Gmail y limpieza de spam para ${madridDate}...`);
+      cleanSpamAndSummarizeGmail({
+        targetChatId: TELEGRAM_ALLOWED_USER_ID,
+        isScheduled: true
+      }).catch(err => {
+        console.error("❌ [CRON ERROR] Fallo en rutina 7:00 AM:", err);
+      });
+    }
+  } catch (cronErr) {
+    console.error("⚠️ [CRON CHECK ERROR]:", cronErr.message);
+  }
+}
+setInterval(checkScheduledTasks, 30000);
+
 // Helpers de control remoto del PC
 async function getPcStatus() {
   try {
@@ -972,7 +1194,14 @@ REGLAS DE OPERACIÓN:
 3. Si te pide anotar algo, añade: [NOTA: texto de la nota].
 4. ACCIONES REALES DE CORREO:
    - Si Manuel te ordena enviar un correo a alguien, extrae los parámetros e incluye al final: [ACCION_EMAIL: destinatario@correo.com | Asunto | Contenido].
-   - Si te pide revisar o leer correos, incluye al final: [ACCION_LEER_EMAILS: max 5].
+   - Si te pide revisar o buscar correos específicos (ej: "mira el de GitGuardian", "mira los de yesas", "qué correos tengo"):
+     Añade: [ACCION_LEER_EMAILS: query="..." | account="yesas12345678@gmail.com"].
+     * Cuentas de Manuel:
+       1. yesas12345678@gmail.com (Desarrollo, GitHub, GitGuardian, Dokploy, Netlify).
+       2. lopezserranojosemanuel20041@gmail.com (Personal y académico).
+   - Si te pide limpiar el spam y resumir sus correos o ejecutar la revisión matutina:
+     Añade: [ACCION_RESUMEN_GMAIL].
+   - ESTRICTAMENTE PROHIBIDO inventar o simular correos: el sistema consulta la API real y devuelve los datos verídicos.
 
 4.1. GESTIÓN AUTÓNOMA DE CITAS Y EVENTOS EN GOOGLE CALENDAR:
    - Tienes control TOTAL sobre Google Calendar de Manuel (${primaryGmailAddress || "yesas12345678@gmail.com"}).
@@ -1733,21 +1962,56 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
   let toolContext = "";
 
   const lower = userText.toLowerCase();
+
+  // Interceptar solicitud directa de limpieza de spam o resumen diario de correo
   if (
-    (lower.includes("correo") || lower.includes("email") || lower.includes("gmail")) &&
-    (lower.includes("mira") || lower.includes("lee") || lower.includes("revisa") || lower.includes("qué") || lower.includes("tengo") || lower.includes("resumen")) &&
+    lower === "/resumen_correos" || lower === "/correos" ||
+    ((lower.includes("spam") || lower.includes("limpia")) && (lower.includes("correo") || lower.includes("gmail") || lower.includes("bandeja") || lower.includes("email"))) ||
+    (lower.includes("resumen") && (lower.includes("correo") || lower.includes("gmail") || lower.includes("email")) && (lower.includes("hoy") || lower.includes("7") || lower.includes("mañana") || lower.includes("día") || lower.includes("dia")))
+  ) {
+    try {
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      await cleanSpamAndSummarizeGmail({ targetChatId: chatId, isScheduled: false });
+      return;
+    } catch (err) {
+      await sendTextMessage(chatId, `⚠️ Hubo un inconveniente al procesar tus correos: ${err.message}`);
+      return;
+    }
+  }
+
+  // Consulta puntual de correos en Gmail (GitGuardian, GitHub, búsqueda específica)
+  if (
+    (lower.includes("correo") || lower.includes("email") || lower.includes("gmail") || lower.includes("gitguardian") || lower.includes("dokploy") || lower.includes("netlify")) &&
+    (lower.includes("mira") || lower.includes("lee") || lower.includes("revisa") || lower.includes("qué") || lower.includes("que") || lower.includes("tengo") || lower.includes("dime")) &&
     !lower.includes("mándale") && !lower.includes("envía") && !lower.includes("manda")
   ) {
     try {
       callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const emailsRes = await executeFetchEmails(4);
+      let queryTerm = "";
+      let targetAcc = DEFAULT_PRIMARY_GMAIL;
+
+      if (lower.includes("gitguardian")) queryTerm = "GitGuardian";
+      else if (lower.includes("github")) queryTerm = "GitHub";
+      else if (lower.includes("dokploy")) queryTerm = "Dokploy";
+      else if (lower.includes("netlify")) queryTerm = "Netlify";
+
+      if (lower.includes("lopez") || lower.includes("20041")) {
+        targetAcc = "lopezserranojosemanuel20041@gmail.com";
+      } else if (lower.includes("yesas")) {
+        targetAcc = "yesas12345678@gmail.com";
+      }
+
+      const emailsRes = await executeFetchEmails(5, queryTerm, targetAcc);
       if (emailsRes?.data?.messages && emailsRes.data.messages.length > 0) {
         const list = emailsRes.data.messages
-          .map((m) => `- De: ${m.sender || "Desconocido"} | Asunto: ${m.subject || "Sin asunto"}\n  Vista: ${m.preview?.body?.slice(0, 100) || ""}`)
+          .map((m) => {
+            const previewSnippet = m.preview?.body?.slice(0, 160) || (m.messageText ? m.messageText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 160) : "");
+            return `- De: ${m.sender || "Desconocido"} | Asunto: "${m.subject || "Sin asunto"}"\n  Detalle: ${previewSnippet}`;
+          })
           .join("\n\n");
-        toolContext = `ÚLTIMOS CORREOS OBTENIDOS DE GMAIL:\n${list}`;
+        toolContext = `CORREOS REALES OBTENIDOS DE GMAIL (${targetAcc}${queryTerm ? ` con filtro "${queryTerm}"` : ""}):\n${list}`;
       } else {
-        toolContext = "GMAIL: No se encontraron correos nuevos o la bandeja está vacía.";
+        toolContext = `GMAIL (${targetAcc}): No se encontraron correos con la búsqueda "${queryTerm || "recientes"}".`;
       }
     } catch (err) {
       toolContext = `ERROR CONSULTANDO GMAIL: ${err.message}`;
@@ -1814,6 +2078,58 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
       } catch (sendErr) {
         console.error("[EMAIL SEND ERROR]", sendErr);
         aiReply += `\n\n⚠️ _Error al enviar correo a ${recipient}:_ ${sendErr.message}`;
+      }
+    }
+
+    // Detectar acción de resumen de Gmail y limpieza de spam
+    const resumenGmailMatch = aiReply.match(/\[(?:ACCION_RESUMEN_GMAIL|ACCION_LIMPIAR_SPAM)(?::\s*(.*?))?\]/i);
+    if (resumenGmailMatch) {
+      aiReply = aiReply.replace(resumenGmailMatch[0], "").trim();
+      callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      const summaryText = await cleanSpamAndSummarizeGmail({ targetChatId: chatId, isScheduled: false });
+      if (summaryText) {
+        aiReply += `\n\n${summaryText}`;
+      }
+    }
+
+    // Detectar acción de lectura y consulta de emails
+    const readEmailMatch = aiReply.match(/\[ACCION_LEER_EMAILS:\s*(.*?)\]/i);
+    if (readEmailMatch) {
+      const rawParams = readEmailMatch[1].trim();
+      aiReply = aiReply.replace(readEmailMatch[0], "").trim();
+
+      let targetMax = 5;
+      let targetQuery = "";
+      let targetAccount = DEFAULT_PRIMARY_GMAIL;
+
+      const maxM = rawParams.match(/max\s*[:=]?\s*(\d+)/i);
+      if (maxM) targetMax = parseInt(maxM[1], 10);
+
+      const qM = rawParams.match(/query\s*[:=]?\s*["']?([^"'|]+)["']?/i);
+      if (qM) targetQuery = qM[1].trim();
+      else if (!rawParams.toLowerCase().includes("max") && !rawParams.toLowerCase().includes("account")) {
+        targetQuery = rawParams;
+      }
+
+      const accM = rawParams.match(/account\s*[:=]?\s*["']?([^"'|]+)["']?/i);
+      if (accM) targetAccount = accM[1].trim();
+
+      try {
+        callTelegram("sendChatAction", { chat_id: chatId, action: "typing" });
+        const emailsRes = await executeFetchEmails(targetMax, targetQuery, targetAccount);
+        const messages = emailsRes?.data?.messages || [];
+        if (messages.length > 0) {
+          const list = messages.map(m => {
+            const previewSnippet = m.preview?.body?.slice(0, 160) || (m.messageText ? m.messageText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 160) : "");
+            return `• *De:* ${m.sender || "Desconocido"}\n  *Asunto:* *${m.subject || "Sin asunto"}*\n  *Detalle:* _${previewSnippet}_`;
+          }).join("\n\n");
+          aiReply += `\n\n📬 *Correos recuperados en vivo (\`${targetAccount}\`)*:\n\n${list}`;
+        } else {
+          aiReply += `\n\n📬 *Bandeja de Gmail (\`${targetAccount}\`)*: No se encontraron correos con el filtro \`${targetQuery || "recientes"}\`.`;
+        }
+      } catch (readErr) {
+        console.error("[EMAIL FETCH ERROR]", readErr);
+        aiReply += `\n\n⚠️ _Error al consultar correos en ${targetAccount}:_ ${readErr.message}`;
       }
     }
 
