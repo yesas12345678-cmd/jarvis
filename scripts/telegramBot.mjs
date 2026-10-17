@@ -90,15 +90,23 @@ async function syncConnectedApps(force = false) {
   }
 
   try {
-    let cursor = null;
-    const allItems = [];
-    do {
-      const res = await composio.client.connectedAccounts.list({ cursor: cursor || undefined });
-      if (res && res.items) {
-        allItems.push(...res.items);
-      }
-      cursor = res?.next_cursor;
-    } while (cursor);
+    const fetchAccounts = async () => {
+      let cursor = null;
+      const items = [];
+      do {
+        const res = await composio.client.connectedAccounts.list({ cursor: cursor || undefined });
+        if (res && res.items) {
+          items.push(...res.items);
+        }
+        cursor = res?.next_cursor;
+      } while (cursor);
+      return items;
+    };
+
+    const allItems = await Promise.race([
+      fetchAccounts(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout sincronizando cuentas")), 6000))
+    ]);
 
     const seen = new Set();
     const list = [];
@@ -958,8 +966,10 @@ setInterval(checkScheduledTasks, 30000);
 
 // Helpers de control remoto del PC
 async function getPcStatus() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3500);
   try {
-    const res = await fetch("http://localhost:3001/api/pc-bridge");
+    const res = await fetch("http://localhost:3001/api/pc-bridge", { signal: controller.signal });
     if (res.ok) {
       const data = await res.json();
       if (data.completed && data.completed.length > 0) {
@@ -972,6 +982,9 @@ async function getPcStatus() {
       return data;
     }
   } catch {}
+  finally {
+    clearTimeout(timer);
+  }
   return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [], proyectos: [], activeApps: [] };
 }
 
@@ -980,8 +993,10 @@ let isPollingBridge = false;
 async function listenPcBridgeEvents() {
   if (isPollingBridge) return;
   isPollingBridge = true;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
   try {
-    const res = await fetch("http://localhost:3001/api/pc-bridge");
+    const res = await fetch("http://localhost:3001/api/pc-bridge", { signal: controller.signal });
     if (res.ok) {
       const data = await res.json();
       if (data.completed && data.completed.length > 0) {
@@ -1002,20 +1017,27 @@ async function listenPcBridgeEvents() {
     }
   } catch {}
   finally {
+    clearTimeout(timer);
     isPollingBridge = false;
   }
 }
 setInterval(listenPcBridgeEvents, 2500);
 
 async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null, extra = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
   try {
     const res = await fetch("http://localhost:3001/api/pc-bridge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "command", action, delaySeconds, taskPrompt, ...extra }),
+      signal: controller.signal,
     });
     if (res.ok) return await res.json();
   } catch {}
+  finally {
+    clearTimeout(timer);
+  }
   return null;
 }
 
@@ -1043,23 +1065,36 @@ async function sendPcObsidianNote(folder, filename, content, mode = "write") {
   return await sendPcCommand("obsidian_note", 0, null, { folder, filename, content, mode });
 }
 
-// Helper para llamadas a Telegram
+// Helper para llamadas a Telegram con timeout y protección de sockets caídos
 async function callTelegram(method, params = {}) {
+  const timeoutMs = params.timeout ? (params.timeout + 10) * 1000 : 15000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(`${TELEGRAM_API}/${method}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
+      signal: controller.signal,
     });
     return await res.json();
   } catch (err) {
-    console.error(`[TELEGRAM] Error llamando a ${method}:`, err.message);
+    if (err.name === "AbortError") {
+      console.warn(`[TELEGRAM] Timeout (${timeoutMs}ms) en llamada a ${method}`);
+    } else {
+      console.error(`[TELEGRAM] Error llamando a ${method}:`, err.message);
+    }
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // Helper para descargar archivos multimedia de Telegram (fotos, notas de voz, audios)
 async function downloadTelegramFile(fileId) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
   try {
     const fileInfo = await callTelegram("getFile", { file_id: fileId });
     if (!fileInfo || !fileInfo.ok || !fileInfo.result?.file_path) {
@@ -1067,7 +1102,7 @@ async function downloadTelegramFile(fileId) {
       return null;
     }
     const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileInfo.result.file_path}`;
-    const res = await fetch(downloadUrl);
+    const res = await fetch(downloadUrl, { signal: controller.signal });
     if (!res.ok) {
       console.warn(`[TELEGRAM FILE] Error HTTP ${res.status} al descargar ${downloadUrl}`);
       return null;
@@ -1082,6 +1117,8 @@ async function downloadTelegramFile(fileId) {
   } catch (err) {
     console.error("[TELEGRAM FILE ERROR]:", err.message);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -1632,23 +1669,34 @@ async function processMessageQueue() {
   if (isQueueProcessing) return;
   isQueueProcessing = true;
 
-  while (userMessageQueue.length > 0) {
-    const item = userMessageQueue.shift();
-    try {
-      callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
-      await handleUserMessage(item);
-    } catch (err) {
-      console.error("[QUEUE_DISPATCH_ERROR]:", err);
-    }
+  try {
+    while (userMessageQueue.length > 0) {
+      const item = userMessageQueue.shift();
+      try {
+        callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
+        // Watchdog de 45 segundos para que NUNCA se quede colgado un mensaje
+        await Promise.race([
+          handleUserMessage(item),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Watchdog timeout (45s) en handleUserMessage")), 45000)
+          ),
+        ]);
+      } catch (err) {
+        console.error("[QUEUE_DISPATCH_ERROR]:", err.message || err);
+        try {
+          await sendTextMessage(item.chatId, "⚠️ He sufrido una breve desconexión temporal de red, pero ya me he recuperado. ¿Me repites tu mensaje por favor?");
+        } catch {}
+      }
 
-    if (userMessageQueue.length > 0) {
-      callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
-      // Cooldown de 600ms entre mensajes para evitar rate limits
-      await new Promise((r) => setTimeout(r, 600));
+      if (userMessageQueue.length > 0) {
+        callTelegram("sendChatAction", { chat_id: item.chatId, action: "typing" });
+        // Cooldown de 600ms entre mensajes para evitar rate limits
+        await new Promise((r) => setTimeout(r, 600));
+      }
     }
+  } finally {
+    isQueueProcessing = false;
   }
-
-  isQueueProcessing = false;
 }
 
 async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
