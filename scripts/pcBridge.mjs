@@ -483,10 +483,54 @@ function getAntigravityActivity() {
   return cachedAgTelemetry;
 }
 
+let cachedActiveApps = [];
+let lastAppsScanTime = 0;
+
+function getActiveApps() {
+  const now = Date.now();
+  if (cachedActiveApps.length > 0 && now - lastAppsScanTime < 15000) {
+    return cachedActiveApps;
+  }
+  try {
+    const knownApps = {
+      chrome: "Google Chrome",
+      "Antigravity IDE": "Antigravity IDE",
+      Notion: "Notion",
+      "Notion Calendar": "Notion Calendar",
+      Spotify: "Spotify",
+      "WhatsApp.Root": "WhatsApp Desktop",
+      WhatsApp: "WhatsApp",
+      Obsidian: "Obsidian",
+      Code: "VS Code",
+      Telegram: "Telegram Desktop",
+      GeminiAppLauncher: "App Gemini",
+      powershell: "PowerShell Terminal",
+    };
+
+    const out = execFileSync("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      "Get-Process | Where-Object { $_.SessionId -eq 1 } | Group-Object ProcessName | Select-Object -ExpandProperty Name"
+    ], { encoding: "utf-8", timeout: 4000 });
+
+    const running = out.split("\n").map(s => s.trim()).filter(Boolean);
+    const detected = [];
+    for (const [proc, label] of Object.entries(knownApps)) {
+      if (running.includes(proc) && !detected.includes(label)) {
+        detected.push(label);
+      }
+    }
+    cachedActiveApps = detected;
+    lastAppsScanTime = now;
+  } catch {}
+  return cachedActiveApps;
+}
+
 async function sendHeartbeat() {
   try {
     const gitTelemetry = getGitTelemetry();
     const agTelemetry = getAntigravityActivity();
+    const activeApps = getActiveApps();
 
     const payload = {
       type: "heartbeat",
@@ -496,6 +540,7 @@ async function sendHeartbeat() {
       proyectos: getProyectosList(),
       gitActivity: gitTelemetry.slice(0, 8),
       antigravity: agTelemetry,
+      activeApps,
     };
 
     const res = await fetch(BRIDGE_ENDPOINT, {

@@ -960,10 +960,52 @@ setInterval(checkScheduledTasks, 30000);
 async function getPcStatus() {
   try {
     const res = await fetch("http://localhost:3001/api/pc-bridge");
-    if (res.ok) return await res.json();
+    if (res.ok) {
+      const data = await res.json();
+      if (data.completed && data.completed.length > 0) {
+        for (const item of data.completed) {
+          if (item.summary) {
+            sendTextMessage(ALLOWED_USER_ID, item.summary).catch(() => {});
+          }
+        }
+      }
+      return data;
+    }
   } catch {}
-  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [], proyectos: [] };
+  return { online: false, lastSeen: null, hostname: "PC-Manuel", secondsAgo: null, pendingCommands: 0, unreadProgress: [], completed: [], proyectos: [], activeApps: [] };
 }
+
+// Listener continuo de resultados de comandos asíncronos en el PC
+let isPollingBridge = false;
+async function listenPcBridgeEvents() {
+  if (isPollingBridge) return;
+  isPollingBridge = true;
+  try {
+    const res = await fetch("http://localhost:3001/api/pc-bridge");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.completed && data.completed.length > 0) {
+        for (const item of data.completed) {
+          if (item.summary) {
+            console.log(`[PC BRIDGE COMPLETION] Enviando a Telegram:`, item.summary.slice(0, 80));
+            await sendTextMessage(ALLOWED_USER_ID, item.summary);
+          }
+        }
+      }
+      if (data.unreadProgress && data.unreadProgress.length > 0) {
+        for (const p of data.unreadProgress) {
+          if (p.message) {
+            await sendTextMessage(ALLOWED_USER_ID, `⏳ ${p.message}`);
+          }
+        }
+      }
+    }
+  } catch {}
+  finally {
+    isPollingBridge = false;
+  }
+}
+setInterval(listenPcBridgeEvents, 2500);
 
 async function sendPcCommand(action, delaySeconds = 0, taskPrompt = null, extra = {}) {
   try {
@@ -1164,6 +1206,11 @@ async function askJudeBrain(userMessage, chatId, toolContext = "", mediaPart = n
     }).join("\n");
   }
 
+  let pcActiveAppsSummary = "• No hay aplicaciones principales abiertas detectadas.";
+  if (pc.activeApps && pc.activeApps.length > 0) {
+    pcActiveAppsSummary = pc.activeApps.map(a => `• ${a}`).join("\n");
+  }
+
   const nowMadrid = new Date().toLocaleString("es-ES", {
     timeZone: "Europe/Madrid",
     dateStyle: "full",
@@ -1184,14 +1231,19 @@ CONTROL DIRECTO DE SU ORDENADOR Y AJUSTES DE WINDOWS (JUDE PC BRIDGE):
 TELEMETRÍA EN TIEMPO REAL DE ANTIGRAVITY Y PROYECTOS EN EL PC (DATOS VERIFICADOS):
 ${antigravitySummary}
 
+APLICACIONES Y PROGRAMAS ABIERTOS EN LA PANTALLA DE SU PC AHORA MISMO:
+${pcActiveAppsSummary}
+
 ESTADO DE REPOSITORIOS Y RAMAS ACTIVAS EN C:\\PROYECTOS:
 ${gitActivitySummary}
 
-REGLA INQUEBRANTABLE DE VERACIDAD SOBRE ANTIGRAVITY Y RAMAS DE GIT:
+REGLA INQUEBRANTABLE DE VERACIDAD SOBRE ANTIGRAVITY, VENTANAS Y RAMAS DE GIT:
 - Si Manuel te pregunta en qué está trabajando Antigravity, qué hace, en qué proyecto está o en qué ramas está operando:
   UTILIZA EXCLUSIVAMENTE los datos reales de la telemetría anterior.
   ESTRICTAMENTE PROHIBIDO inventar nombres de ramas ficticias (como "fix/security-cleanup" o similares) o inventar tareas que no aparezcan en la telemetría.
-  Si Antigravity está trabajando en "Jude Sneakers 3D", dilo tal cual con orgullo. Si una rama es "main", di "main". Si no hay actividad en un repositorio, dilo claramente.
+  Si Antigravity está trabajando en una tarea, dila tal cual. Si una rama es "main", di "main". Si no hay actividad en un repositorio, dilo claramente.
+- Si Manuel te pregunta qué tiene abierto en su ordenador, qué ventanas tiene abiertas o qué programas están en pantalla:
+  MENCIONA EXCLUSIVAMENTE las aplicaciones detectadas en la lista anterior (ej: ${pc.activeApps && pc.activeApps.length > 0 ? pc.activeApps.join(", ") : "Google Chrome, Antigravity IDE"}). No inventes otras aplicaciones ni digas que necesitas ejecutar un comando para saberlo, ¡ya lo tienes en tu telemetría directa!
 
 CAPACIDADES MULTIMODAL:
 - Puedes ver, analizar y describir con total precisión cualquier imagen o captura de pantalla que Manuel te envíe.
@@ -2041,32 +2093,37 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
     }
   }
 
-  // Consulta puntual sobre el estado, ramas o tareas de Antigravity en el PC local
+  // Consulta puntual sobre el estado, ramas, tareas o aplicaciones abiertas en el PC local
   if (
     lower.includes("antigravity") ||
-    (lower.includes("rama") || lower.includes("ramas") || lower.includes("repositorio") || lower.includes("repositorios")) ||
-    (lower.includes("en qué") && (lower.includes("trabaja") || lower.includes("trabajando") || lower.includes("hace") || lower.includes("haciendo")))
+    lower.includes("rama") || lower.includes("ramas") || lower.includes("repositorio") || lower.includes("repositorios") ||
+    (lower.includes("en qué") && (lower.includes("trabaja") || lower.includes("trabajando") || lower.includes("hace") || lower.includes("haciendo"))) ||
+    lower.includes("abierto") || lower.includes("abierta") || lower.includes("ventanas") || lower.includes("programas") || lower.includes("aplicaciones") ||
+    lower.includes("qué tengo") || lower.includes("que tengo")
   ) {
     try {
       const pc = await getPcStatus();
       if (pc.online) {
-        let agReport = "INFORMACIÓN REAL EN VIVO DE ANTIGRAVITY Y REPOSITORIOS (WIN-CM7ASU1D27L):\n";
+        let pcReport = "INFORMACIÓN REAL EN VIVO DEL PC (WIN-CM7ASU1D27L):\n";
         if (pc.antigravity) {
-          agReport += `• Misión actual de Antigravity: "${pc.antigravity.lastGoal}" (hace ${pc.antigravity.minutesAgo} min)\n• Última acción: ${pc.antigravity.lastAction}\n`;
+          pcReport += `• Misión actual de Antigravity: "${pc.antigravity.lastGoal}" (hace ${pc.antigravity.minutesAgo} min)\n• Última acción: ${pc.antigravity.lastAction}\n`;
         } else {
-          agReport += "• Antigravity: En reposo o sin sesión activa detectada.\n";
+          pcReport += "• Antigravity: En reposo o sin sesión activa detectada.\n";
+        }
+        if (pc.activeApps && pc.activeApps.length > 0) {
+          pcReport += `\nAPLICACIONES Y PROGRAMAS ABIERTOS EN PANTALLA:\n${pc.activeApps.map(a => `• ${a}`).join("\n")}\n`;
         }
         if (pc.gitActivity && pc.gitActivity.length > 0) {
-          agReport += "\nESTADO REAL DE RAMAS Y REPOSITORIOS EN C:\\PROYECTOS:\n";
+          pcReport += "\nESTADO REAL DE RAMAS Y REPOSITORIOS EN C:\\PROYECTOS:\n";
           for (const g of pc.gitActivity.slice(0, 8)) {
             const st = g.clean ? "Limpio" : `${g.dirtyCount} archivos modificados`;
-            agReport += `• [${g.name}] Rama: "${g.branch}" (${st}) | Último commit: ${g.commit} - "${g.commitMsg}" (${g.commitTime})\n`;
+            pcReport += `• [${g.name}] Rama: "${g.branch}" (${st}) | Último commit: ${g.commit} - "${g.commitMsg}" (${g.commitTime})\n`;
           }
         }
-        toolContext = (toolContext ? `${toolContext}\n\n` : "") + agReport;
+        toolContext = (toolContext ? `${toolContext}\n\n` : "") + pcReport;
       }
     } catch (agErr) {
-      console.warn("[ANTIGRAVITY TELEMETRY PRE-FETCH WARN]:", agErr.message);
+      console.warn("[PC TELEMETRY PRE-FETCH WARN]:", agErr.message);
     }
   }
 

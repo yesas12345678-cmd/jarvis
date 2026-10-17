@@ -59,6 +59,7 @@ export async function GET() {
     proyectos: state.proyectos || [],
     antigravity: state.antigravity || null,
     gitActivity: state.gitActivity || [],
+    activeApps: state.activeApps || [],
   });
 }
 
@@ -76,6 +77,7 @@ export async function POST(req: Request) {
       if (body.proyectos) state.proyectos = body.proyectos;
       if (body.antigravity) state.antigravity = body.antigravity;
       if (body.gitActivity) state.gitActivity = body.gitActivity;
+      if (body.activeApps) state.activeApps = body.activeApps;
 
       // Extraer comandos pendientes para entregárselos al PC
       const commandsToSend = [...(state.commands || [])];
