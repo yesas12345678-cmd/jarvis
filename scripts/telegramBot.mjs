@@ -1150,6 +1150,20 @@ async function askJudeBrain(userMessage, chatId, toolContext = "", mediaPart = n
     ? pc.proyectos.map(p => `• ${p}`).join("\n")
     : "• Consultando sincronización con el puente local.";
 
+  let antigravitySummary = "• Antigravity en reposo o sin sesión activa reciente detectada.";
+  if (pc.antigravity) {
+    const ag = pc.antigravity;
+    antigravitySummary = `• Misión activa de Antigravity: "${ag.lastGoal}" (hace ${ag.minutesAgo} min)\n• Última acción técnica: ${ag.lastAction}`;
+  }
+
+  let gitActivitySummary = "• Consultando estado de repositorios locales...";
+  if (pc.gitActivity && pc.gitActivity.length > 0) {
+    gitActivitySummary = pc.gitActivity.map(g => {
+      const dirty = g.clean ? "Limpio" : `${g.dirtyCount} archivos modificados`;
+      return `• [${g.name}] Rama: "${g.branch}" (${dirty}) | Último commit: ${g.commit} - "${g.commitMsg}" (${g.commitTime})`;
+    }).join("\n");
+  }
+
   const nowMadrid = new Date().toLocaleString("es-ES", {
     timeZone: "Europe/Madrid",
     dateStyle: "full",
@@ -1166,9 +1180,18 @@ CONTROL DIRECTO DE SU ORDENADOR Y AJUSTES DE WINDOWS (JUDE PC BRIDGE):
 - SÍ TIENES ACCESO COMPLETO a sus archivos locales, carpetas, terminal y AJUSTES del sistema de su ordenador en tiempo real mediante el puente Jude PC Bridge.
 - SÍ PUEDES MODIFICAR AJUSTES DE SU ORDENADOR (pantalla, sonido, volumen, modo oscuro/claro, energía, aplicaciones, red, etc.) ejecutando comandos de PowerShell o lanzando paneles de configuración mediante [ACCION_PC_CMD: comando].
 - NUNCA le digas a Manuel que "estás en un VPS remoto", que "no puedes tocar ajustes de su ordenador", que "no puedes abrir interfaces", ni le pidas que copie y pegue comandos manualmente en su terminal. ¡Tú mismo ejecutas los comandos en su ordenador usando [ACCION_PC_CMD: ...], él no tiene que teclear nada!
-- Si Manuel te pregunta "¿puedes tocar ajustes de mi ordenador?", responde rotundamente que SÍ: dile que a través del puente de control puedes modificar cualquier configuración de Windows, volumen, pantalla, aplicaciones, temas o sistema operativo de inmediato mediante scripts y comandos directos.
-- CARPETAS ACTUALES EN SU DIRECTORIO LOCAL (C:\\PROYECTOS):
-${pcProyectosList}
+
+TELEMETRÍA EN TIEMPO REAL DE ANTIGRAVITY Y PROYECTOS EN EL PC (DATOS VERIFICADOS):
+${antigravitySummary}
+
+ESTADO DE REPOSITORIOS Y RAMAS ACTIVAS EN C:\\PROYECTOS:
+${gitActivitySummary}
+
+REGLA INQUEBRANTABLE DE VERACIDAD SOBRE ANTIGRAVITY Y RAMAS DE GIT:
+- Si Manuel te pregunta en qué está trabajando Antigravity, qué hace, en qué proyecto está o en qué ramas está operando:
+  UTILIZA EXCLUSIVAMENTE los datos reales de la telemetría anterior.
+  ESTRICTAMENTE PROHIBIDO inventar nombres de ramas ficticias (como "fix/security-cleanup" o similares) o inventar tareas que no aparezcan en la telemetría.
+  Si Antigravity está trabajando en "Jude Sneakers 3D", dilo tal cual con orgullo. Si una rama es "main", di "main". Si no hay actividad en un repositorio, dilo claramente.
 
 CAPACIDADES MULTIMODAL:
 - Puedes ver, analizar y describir con total precisión cualquier imagen o captura de pantalla que Manuel te envíe.
@@ -2018,6 +2041,35 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
     }
   }
 
+  // Consulta puntual sobre el estado, ramas o tareas de Antigravity en el PC local
+  if (
+    lower.includes("antigravity") ||
+    (lower.includes("rama") || lower.includes("ramas") || lower.includes("repositorio") || lower.includes("repositorios")) ||
+    (lower.includes("en qué") && (lower.includes("trabaja") || lower.includes("trabajando") || lower.includes("hace") || lower.includes("haciendo")))
+  ) {
+    try {
+      const pc = await getPcStatus();
+      if (pc.online) {
+        let agReport = "INFORMACIÓN REAL EN VIVO DE ANTIGRAVITY Y REPOSITORIOS (WIN-CM7ASU1D27L):\n";
+        if (pc.antigravity) {
+          agReport += `• Misión actual de Antigravity: "${pc.antigravity.lastGoal}" (hace ${pc.antigravity.minutesAgo} min)\n• Última acción: ${pc.antigravity.lastAction}\n`;
+        } else {
+          agReport += "• Antigravity: En reposo o sin sesión activa detectada.\n";
+        }
+        if (pc.gitActivity && pc.gitActivity.length > 0) {
+          agReport += "\nESTADO REAL DE RAMAS Y REPOSITORIOS EN C:\\PROYECTOS:\n";
+          for (const g of pc.gitActivity.slice(0, 8)) {
+            const st = g.clean ? "Limpio" : `${g.dirtyCount} archivos modificados`;
+            agReport += `• [${g.name}] Rama: "${g.branch}" (${st}) | Último commit: ${g.commit} - "${g.commitMsg}" (${g.commitTime})\n`;
+          }
+        }
+        toolContext = (toolContext ? `${toolContext}\n\n` : "") + agReport;
+      }
+    } catch (agErr) {
+      console.warn("[ANTIGRAVITY TELEMETRY PRE-FETCH WARN]:", agErr.message);
+    }
+  }
+
   if (
     (lower.includes("calendario") || lower.includes("agenda") || lower.includes("citas") || lower.includes("eventos") || lower.includes("cita") || lower.includes("entrecejo") || lower.includes("examen")) &&
     (lower.includes("mira") || lower.includes("revisa") || lower.includes("qué") || lower.includes("que") || lower.includes("tengo") || lower.includes("mis") || lower.includes("dónde") || lower.includes("donde") || lower.includes("cuándo") || lower.includes("cuando") || lower.includes("hay"))
@@ -2258,10 +2310,8 @@ async function handleUserMessage({ chatId, senderId, userText, mediaPart }) {
         const isExamSummary = summary.toLowerCase().startsWith("examen") || summary.toLowerCase().startsWith("ex.");
         const examCalId = "d2e409d4411fa610161db0ab00ca3318344250ac9c4c1c794159086694f15f5e@group.calendar.google.com";
         const targetCalId = isExamSummary ? examCalId : (calId || "primary");
-        const effectiveAllDay = isExamSummary ? true : isAllDay;
-
         const { date: startDate, hasTime, isAllDay: parsedAllDay } = parseFlexibleDateTime(startStr, 18);
-        const finalAllDay = effectiveAllDay || parsedAllDay;
+        const finalAllDay = isExamSummary ? true : parsedAllDay;
         let endDate;
         if (endStr && !finalAllDay) {
           if (endStr.includes("h") || endStr.includes("m") || endStr.includes("hora")) {

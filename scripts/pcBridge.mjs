@@ -2,7 +2,7 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
-import { exec, spawn } from "child_process";
+import { exec, spawn, execFileSync } from "child_process";
 
 dotenv.config();
 
@@ -311,14 +311,159 @@ function getProyectosList() {
   return [];
 }
 
+// Telemetría en vivo de Git y proyectos locales
+let cachedGitTelemetry = [];
+let lastGitScanTime = 0;
+
+function getGitTelemetry() {
+  const now = Date.now();
+  if (now - lastGitScanTime < 15000 && cachedGitTelemetry.length > 0) {
+    return cachedGitTelemetry;
+  }
+
+  const base = "C:\\PROYECTOS";
+  const results = [];
+  try {
+    if (!fs.existsSync(base)) return results;
+    const entries = fs.readdirSync(base, { withFileTypes: true });
+
+    const scanList = [];
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      const p = path.join(base, ent.name);
+      if (ent.name === "temporal") {
+        try {
+          const sub = fs.readdirSync(p, { withFileTypes: true });
+          for (const s of sub) {
+            if (s.isDirectory() && fs.existsSync(path.join(p, s.name, ".git"))) {
+              scanList.push({ path: path.join(p, s.name), name: `temporal/${s.name}` });
+            }
+          }
+        } catch {}
+      } else if (fs.existsSync(path.join(p, ".git"))) {
+        scanList.push({ path: p, name: ent.name });
+      }
+    }
+
+    for (const item of scanList) {
+      try {
+        const gitIndex = path.join(item.path, ".git", "index");
+        const mtime = fs.existsSync(gitIndex) ? fs.statSync(gitIndex).mtimeMs : 0;
+
+        const branch = execFileSync("git", ["branch", "--show-current"], { cwd: item.path, timeout: 1500, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || "HEAD";
+        const statusOut = execFileSync("git", ["status", "--short"], { cwd: item.path, timeout: 1500, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+        const logOut = execFileSync("git", ["log", "-1", "--pretty=format:%h|%s|%cr"], { cwd: item.path, timeout: 1500, stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+
+        const parts = logOut.split("|");
+        results.push({
+          name: item.name,
+          branch,
+          clean: !statusOut,
+          dirtyCount: statusOut ? statusOut.split("\n").length : 0,
+          commit: parts[0] || "",
+          commitMsg: parts[1] || "",
+          commitTime: parts[2] || "",
+          mtime
+        });
+      } catch {}
+    }
+
+    results.sort((a, b) => b.mtime - a.mtime);
+    cachedGitTelemetry = results;
+    lastGitScanTime = now;
+  } catch {}
+
+  return cachedGitTelemetry;
+}
+
+// Telemetría en vivo de las sesiones y tareas activas de Antigravity
+let cachedAgTelemetry = null;
+let lastAgScanTime = 0;
+
+function getAntigravityActivity() {
+  const now = Date.now();
+  if (now - lastAgScanTime < 8000 && cachedAgTelemetry) {
+    return cachedAgTelemetry;
+  }
+
+  const brainDir = path.join(os.homedir(), ".gemini", "antigravity-ide", "brain");
+  if (!fs.existsSync(brainDir)) return null;
+
+  try {
+    const folders = fs.readdirSync(brainDir, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name !== "tempmediaStorage");
+
+    const convList = [];
+    for (const f of folders) {
+      const tp = path.join(brainDir, f.name, ".system_generated", "logs", "transcript.jsonl");
+      if (fs.existsSync(tp)) {
+        convList.push({ path: tp, id: f.name, mtime: fs.statSync(tp).mtimeMs });
+      }
+    }
+
+    convList.sort((a, b) => b.mtime - a.mtime);
+    const top = convList[0];
+    if (!top) return null;
+
+    // Leer último bloque del transcript para extraer la tarea actual
+    const stats = fs.statSync(top.path);
+    const readSize = Math.min(stats.size, 128 * 1024);
+    const buffer = Buffer.alloc(readSize);
+    const fd = fs.openSync(top.path, "r");
+    fs.readSync(fd, buffer, 0, readSize, stats.size - readSize);
+    fs.closeSync(fd);
+
+    const chunk = buffer.toString("utf-8");
+    const lines = chunk.split("\n").filter(Boolean);
+
+    let lastGoal = "";
+    let lastAction = "";
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const parsed = JSON.parse(lines[i]);
+        if (!lastGoal && parsed.type === "USER_INPUT" && parsed.content) {
+          let text = parsed.content;
+          if (text.includes("<USER_REQUEST>")) {
+            text = text.split("<USER_REQUEST>")[1].split("</USER_REQUEST>")[0];
+          }
+          lastGoal = text.split("<ADDITIONAL_METADATA>")[0].trim().slice(0, 300);
+        }
+        if (!lastAction && parsed.type === "PLANNER_RESPONSE" && parsed.tool_calls) {
+          lastAction = parsed.tool_calls.map(tc => tc.toolAction || tc.name).join(", ");
+        }
+        if (lastGoal && lastAction) break;
+      } catch {}
+    }
+
+    const minutesAgo = Math.round((now - top.mtime) / 60000);
+
+    cachedAgTelemetry = {
+      activeSessionId: top.id,
+      minutesAgo,
+      lastGoal: lastGoal || "Sesión activa en el IDE de Antigravity",
+      lastAction: lastAction || "En ejecución",
+      timestamp: new Date(top.mtime).toISOString()
+    };
+    lastAgScanTime = now;
+  } catch {}
+
+  return cachedAgTelemetry;
+}
+
 async function sendHeartbeat() {
   try {
+    const gitTelemetry = getGitTelemetry();
+    const agTelemetry = getAntigravityActivity();
+
     const payload = {
       type: "heartbeat",
       hostname: os.hostname(),
       uptime: Math.round(os.uptime()),
       platform: os.platform(),
       proyectos: getProyectosList(),
+      gitActivity: gitTelemetry.slice(0, 8),
+      antigravity: agTelemetry,
     };
 
     const res = await fetch(BRIDGE_ENDPOINT, {
@@ -342,3 +487,4 @@ async function sendHeartbeat() {
 
 setInterval(sendHeartbeat, POLL_INTERVAL);
 sendHeartbeat();
+
