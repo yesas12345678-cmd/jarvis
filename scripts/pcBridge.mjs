@@ -402,62 +402,80 @@ function getAntigravityActivity() {
     }
 
     convList.sort((a, b) => b.mtime - a.mtime);
-    const top = convList[0];
-    if (!top) return null;
 
-    // Escaneo hacia atrás en bloques de 256KB para encontrar la última petición real y acción
-    const stats = fs.statSync(top.path);
-    const fd = fs.openSync(top.path, "r");
-    const CHUNK = 256 * 1024;
-    let pos = stats.size;
+    let chosen = null;
     let lastGoal = "";
     let lastAction = "";
-    let remainder = "";
 
-    while (pos > 0 && (!lastGoal || !lastAction)) {
-      const readLen = Math.min(pos, CHUNK);
-      pos -= readLen;
-      const buf = Buffer.alloc(readLen);
-      fs.readSync(fd, buf, 0, readLen, pos);
-      const text = buf.toString("utf-8") + remainder;
-      const lines = text.split("\n");
-      remainder = lines[0];
+    for (const candidate of convList.slice(0, 5)) {
+      try {
+        const stats = fs.statSync(candidate.path);
+        const fd = fs.openSync(candidate.path, "r");
+        const CHUNK = 256 * 1024;
+        let pos = stats.size;
+        let candGoal = "";
+        let candAction = "";
+        let remainder = "";
 
-      for (let i = lines.length - 1; i >= 1; i--) {
-        const line = lines[i];
-        if (!lastAction && line.includes('"PLANNER_RESPONSE"')) {
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.type === "PLANNER_RESPONSE" && parsed.tool_calls) {
-              lastAction = parsed.tool_calls.map(tc => tc.toolAction || tc.name).join(", ");
+        while (pos > 0 && (!candGoal || !candAction)) {
+          const readLen = Math.min(pos, CHUNK);
+          pos -= readLen;
+          const buf = Buffer.alloc(readLen);
+          fs.readSync(fd, buf, 0, readLen, pos);
+          const text = buf.toString("utf-8") + remainder;
+          const lines = text.split("\n");
+          remainder = lines[0];
+
+          for (let i = lines.length - 1; i >= 1; i--) {
+            const line = lines[i];
+            if (!candAction && line.includes('"PLANNER_RESPONSE"')) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.type === "PLANNER_RESPONSE" && parsed.tool_calls) {
+                  candAction = parsed.tool_calls.map(tc => tc.toolAction || tc.name).join(", ");
+                }
+              } catch {}
             }
-          } catch {}
-        }
-        if (!lastGoal && line.includes('"USER_INPUT"')) {
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.type === "USER_INPUT" && parsed.content) {
-              let text = parsed.content;
-              if (text.includes("<USER_REQUEST>")) {
-                text = text.split("<USER_REQUEST>")[1].split("</USER_REQUEST>")[0];
-              }
-              lastGoal = text.split("<ADDITIONAL_METADATA>")[0].trim().slice(0, 300);
+            if (!candGoal && line.includes('"USER_INPUT"')) {
+              try {
+                const parsed = JSON.parse(line);
+                if (parsed.type === "USER_INPUT" && parsed.content) {
+                  let text = parsed.content;
+                  if (text.includes("<USER_REQUEST>")) {
+                    text = text.split("<USER_REQUEST>")[1].split("</USER_REQUEST>")[0];
+                  }
+                  candGoal = text.split("<ADDITIONAL_METADATA>")[0].trim().slice(0, 300);
+                }
+              } catch {}
             }
-          } catch {}
+            if (candGoal && candAction) break;
+          }
         }
-        if (lastGoal && lastAction) break;
-      }
+        fs.closeSync(fd);
+
+        if (candGoal) {
+          chosen = candidate;
+          lastGoal = candGoal;
+          lastAction = candAction;
+          break;
+        }
+      } catch {}
     }
-    fs.closeSync(fd);
 
-    const minutesAgo = Math.round((now - top.mtime) / 60000);
+    if (!chosen && convList.length > 0) {
+      chosen = convList[0];
+    }
+
+    if (!chosen) return null;
+
+    const minutesAgo = Math.round((now - chosen.mtime) / 60000);
 
     cachedAgTelemetry = {
-      activeSessionId: top.id,
+      activeSessionId: chosen.id,
       minutesAgo,
       lastGoal: lastGoal || "Sesión activa en el IDE de Antigravity",
       lastAction: lastAction || "En ejecución",
-      timestamp: new Date(top.mtime).toISOString()
+      timestamp: new Date(chosen.mtime).toISOString()
     };
     lastAgScanTime = now;
   } catch {}
